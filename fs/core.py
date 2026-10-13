@@ -23,7 +23,7 @@ from .preferences import validate, worker_layout
 from .sources import SourceMonitor, virtual_source, volume_identity, ensure_gvfs_bridge
 
 DEFAULT_MODEL = "embeddinggemma-2:740m"
-EXCLUDED = {".git", ".venv", "venv", "node_modules", "__pycache__", ".cache", "$RECYCLE.BIN", "System Volume Information"}
+EXCLUDED = {"vault", ".git", ".venv", "venv", "node_modules", "__pycache__", ".cache", "$RECYCLE.BIN", "System Volume Information"}
 TEXT_EXTENSIONS = set("txt md rst csv tsv log json jsonl xml html htm css scss js jsx ts tsx py rs go java c h cpp hpp sh bash zsh fish toml yaml yml ini cfg conf sql tex vue svelte rb php swift kt dart r env gitignore dockerfile makefile".split())
 MAX_BYTES = 8 * 1024 * 1024
 MAX_CHUNKS = 64
@@ -208,17 +208,23 @@ class Store:
                 db.execute('ALTER TABLE locations ADD COLUMN volume TEXT')
             if 'total_files' not in location_columns:
                 db.execute('ALTER TABLE locations ADD COLUMN total_files INTEGER')
+            for column, definition in [('scope', "TEXT NOT NULL DEFAULT 'recursive'"), ('watch_enabled', 'INTEGER NOT NULL DEFAULT 1')]:
+                if column not in location_columns:
+                    db.execute(f'ALTER TABLE locations ADD COLUMN {column} {definition}')
+            db.execute('CREATE TABLE IF NOT EXISTS location_files(root TEXT NOT NULL REFERENCES locations(root) ON DELETE CASCADE, path TEXT NOT NULL, PRIMARY KEY(root,path))')
         self.apply_preferences()
 
-    def add_location(self, root):
+    def add_location(self, root, scope='recursive'):
         path = Path(root).expanduser()
         if not path.is_absolute():
             raise ValueError('Use an absolute folder or mounted-source path.')
+        if 'vault' in path.parts or 'vault' in path.resolve().parts or path.resolve().is_relative_to(self.directory.resolve()):
+            raise ValueError('Protected folders and private index data are not indexable locations.')
         if VIRTUAL_ROOTS and virtual_source(path):
             raise ValueError('Virtual system folders are not indexable sources.')
         resolved = str(path.resolve())
         with self.connect() as db:
-            db.execute('INSERT OR IGNORE INTO locations(root) VALUES(?)', (resolved,))
+            db.execute('INSERT OR IGNORE INTO locations(root,scope) VALUES(?,?)', (resolved, scope))
         self.sources.invalidate(resolved)
         return resolved
 
@@ -268,7 +274,7 @@ class Store:
             count = db.execute("SELECT count(*),sum(length(content)>0),sum(error IS NOT NULL) FROM files").fetchone()
             return {"files": count[0], "readable": count[1] or 0, "errors": count[2] or 0,
                     "chunks": db.execute("SELECT count(*) FROM vectors").fetchone()[0],
-                    "roots": [{**dict(r), 'availability': self.sources.status(r['root'], r['device'], r['volume'])} for r in db.execute("SELECT l.root,l.device,l.volume,l.total_files,count(f.id) AS files FROM locations l LEFT JOIN files f ON f.root=l.root GROUP BY l.root ORDER BY l.root")],
+                    "roots": [{**dict(r), 'availability': self.sources.status(r['root'], r['device'], r['volume'])} for r in db.execute("SELECT l.root,l.device,l.volume,l.total_files,l.scope,l.watch_enabled,count(f.id) AS files FROM locations l LEFT JOIN files f ON f.root=l.root GROUP BY l.root ORDER BY l.root")],
                     "model": self.embedder.model, "database": str(self.path),
                     "indexed_model": self._meta(db, "model"), "preferences": prefs}
 
@@ -281,24 +287,39 @@ class Store:
     def _bump(db):
         db.execute("UPDATE meta SET value=CAST(value AS INTEGER)+1 WHERE key='revision'")
 
-    def index(self, root: str | Path, semantic=True, progress: Callable | None = None, cancel: threading.Event | None = None):
+    def index(self, root: str | Path, semantic=True, progress: Callable | None = None, cancel: threading.Event | None = None, paths=None):
         if not self.index_lock.acquire(blocking=False):
             raise RuntimeError("An indexing job is already running.")
         try:
             with writer_lock(self.directory / "writer.lock"):
-                return self._index(root, semantic, progress or (lambda _: None), cancel or threading.Event())
+                return self._index(root, semantic, progress or (lambda _: None), cancel or threading.Event(), paths)
         finally:
             self.index_lock.release()
 
-    def _index(self, root, semantic, progress, cancel):
+    def _index(self, root, semantic, progress, cancel, selected_paths=None):
         prefs = self.apply_preferences()
         workers, inference_threads = worker_layout(prefs, getattr(self.embedder, 'supports_media', False))
         prefs = {**prefs, 'cpu_threads': inference_threads}
         self.embedder.options['num_thread'] = inference_threads
         root = Path(root).expanduser().resolve()
+        if 'vault' in root.parts or root.is_relative_to(self.directory.resolve()):
+            raise ValueError('Protected folders and private index data are not indexable locations.')
         ensure_gvfs_bridge(root)
         if not root.is_dir() or (VIRTUAL_ROOTS and virtual_source(root)):
             raise ValueError("Select an existing directory or mounted drive, not a virtual system folder.")
+        with self.connect() as db:
+            location = db.execute('SELECT scope FROM locations WHERE root=?', (str(root),)).fetchone()
+            if selected_paths is None and location and location['scope'] == 'selected':
+                selected_paths = [row[0] for row in db.execute('SELECT path FROM location_files WHERE root=?', (str(root),))]
+        if selected_paths is not None:
+            selected = []
+            for value in selected_paths:
+                path = Path(value)
+                if not path.is_absolute() or path.is_symlink() or not path.resolve().is_relative_to(root) or 'vault' in path.parts or path.resolve().is_relative_to(self.directory.resolve()):
+                    raise ValueError('Selected files must be inside their indexed location, outside private index data, and not symlinks.')
+                if path.is_file():
+                    selected.append(path.resolve())
+            selected = sorted(set(selected), key=lambda path: path.stat().st_size if prefs['max_file_mb'] == 0 else str(path))
         # Validate the service before changing the index; never mix model spaces.
         if semantic:
             self.embedder.embed(["title: fs | text: file search"])
@@ -320,11 +341,13 @@ class Store:
         seen = set()
         walk_errors = []
         def report_progress(payload):
-            if payload.get('phase') == 'indexing' and 'total' in payload:
+            if selected_paths is None and payload.get('phase') == 'indexing' and 'total' in payload:
                 with self.connect() as db:
                     db.execute('UPDATE locations SET total_files=? WHERE root=?', (payload['total'], str(Path(root).expanduser().resolve())))
             state.update({key: value for key, value in payload.items() if key != 'state'})
             progress(dict(state))
+        from .preview import Preview
+        posters = Preview(self, 'worker-thumbnail-cache')
         from .analysis_pool import analyse_file, run_files
         from .media import caption_fingerprint
         def submitted(path):
@@ -335,7 +358,11 @@ class Store:
         def report_path(path):
             state['path'] = path
             progress(dict(state))
-        paths = self._paths(root, walk_errors, cancel, report_progress, smallest_first=prefs['max_file_mb'] == 0)
+        if selected_paths is not None:
+            paths = iter(selected)
+            report_progress({'phase': 'indexing', 'total': len(selected)})
+        else:
+            paths = self._paths(root, walk_errors, cancel, report_progress, smallest_first=prefs['max_file_mb'] == 0)
         def analyse(path, notify):
             return analyse_file(path, prefs, self.embedder, semantic, existing, embedded, cancel, notify)
         for path, data in run_files(paths, analyse, workers, cancel, submitted, report_path):
@@ -372,6 +399,14 @@ class Store:
                         state["updated"] += 1
                 except OSError:
                     state['errors'] += 1
+            if not cancel.is_set() and path.is_file():
+                with self.connect() as db:
+                    thumbnail_row = db.execute('SELECT id FROM files WHERE path=?', (key,)).fetchone()
+                if thumbnail_row:
+                    try:
+                        posters.thumbnail(thumbnail_row[0])
+                    except Exception:
+                        pass  # Poster availability does not change analysis success.
             state['processed'] += 1
             progress(dict(state))
         state['cancelled'] = cancel.is_set()
@@ -381,7 +416,7 @@ class Store:
             source_online = root.is_dir() and root.stat().st_dev == current_device and volume_identity(root) == current_volume
         except OSError:
             source_online = False
-        if not walk_errors and not cancel.is_set() and source_online:
+        if selected_paths is None and not walk_errors and not cancel.is_set() and source_online:
             missing = set(existing) - seen
             with self.connect() as db:
                 db.executemany("DELETE FROM files WHERE path=?", [(p,) for p in missing])

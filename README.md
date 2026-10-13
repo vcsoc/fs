@@ -73,7 +73,7 @@ fs desktop
 
 The installer copies only the standalone build to `~/.local/opt/fs/releases/<version>`, adds the `fs` CLI wrapper to `~/.local/bin`, and registers an **fs** desktop-menu entry under your XDG applications directory. It does not depend on this source checkout and refuses to overwrite existing installation files. `fs desktop` launches the installed GUI; use `FS_DATA_DIR` / `FS_MODEL` / `FS_OLLAMA_URL` environment variables for its overrides. Other CLI commands accept their usual global flags.
 
-Share `dist/fs-0.6.0.AppImage` with its `.sha256` file. See `SHARING.md` for first-run model downloads and platform limitations. Packaging uses an explicit desktop/backend allowlist; the untracked `vault/` directory is neither copied nor packaged.
+Share `dist/fs-0.7.0.AppImage` with its `.sha256` file. See `SHARING.md` for first-run model downloads and platform limitations. Packaging uses an explicit desktop/backend allowlist; the untracked `vault/` directory is neither copied nor packaged.
 
 ## CLI
 
@@ -123,6 +123,14 @@ Use only a local Ollama URL for local-only operation. Changing the model require
 - About includes the developer credit, GitHub link, and database location.
 
 The responsive UI also works in a local browser. It has no hosted fonts, analytics, or remote frontend assets. JetBrains Mono (Nerd Font derivative) is bundled under the SIL Open Font License; see `fs/web/fonts/OFL.txt`.
+
+## File transfer and automatic watching
+
+Drop original files into the desktop window to index **only those files**. Unrelated siblings are never imported. Dropped folders index their complete eligible tree. Imports do not move originals. Drag a result (or a selected group) out to file-aware applications, or use **Copy files / Ctrl+C** to put original file references on the native clipboard for pasting into a file manager. Missing/offline originals cannot be transferred. Native clipboard adapters cover Linux, macOS and Windows; Linux Wayland requires `wl-copy`. Linux is locally verified; acceptance by individual target applications and other platforms varies.
+
+Every added location has a persistent watcher setting, with **Pause watcher / Resume watcher** controls in Indexed locations. Folder locations detect new and modified files recursively; file-only imports watch only their explicitly selected files. Watchers run **while fs or its local service is open**, not as a persistent system service. Discovery shares a 256-entry / approximately 15-ms slice each second, revisits completed trees after 30 seconds, and waits at least five seconds for files to stop changing before queueing analysis. Large trees and slow/offline mounts take longer; this is bounded polling, not instantaneous notification or a hard I/O deadline. Changes queue only when indexing is idle and use the same isolated CPU/memory/thread budgets. Automatic updates are non-destructive: they never prune other cached files or treat disconnection as deletion. **Stop all** also pauses every watcher; resume individual locations explicitly. Automatic direct analysis waits for the selected model to be set up.
+
+Indexing builds cached image/video/PDF posters and text-page previews for readable documents/code. JPEG/JFIF, PNG/APNG, GIF, WebP, BMP, TIFF, AVIF, HEIC/HEIF, ICO, TGA and portable bitmap formats are supported subject to decoder/pixel budgets; video posters use bundled FFmpeg when a host decoder is unavailable. Image orientation and transparent backgrounds are handled. Refresh previously indexed images to apply the updated orientation-aware analysis. Missing originals, offline locations, and unavailable previews are distinguished instead of silently showing identical extension placeholders. These are not promises to decode encrypted, damaged, proprietary or every possible format; office/text thumbnails are readable-content previews, not exact office-page layouts. SVG/scripts/macros are never executed to generate previews.
 
 ## Resource preferences
 

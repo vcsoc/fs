@@ -5,7 +5,6 @@ import hmac
 import mimetypes
 import os
 from pathlib import Path
-import shutil
 import subprocess
 import threading
 import tempfile
@@ -53,7 +52,10 @@ class Preview:
         return hmac.compare_digest(expected, signature or '')
 
     def decorate(self, file):
-        return {**file, 'kind': kind(file['name']), 'media_url': self.url(file['id']), 'thumbnail_url': self.url(file['id'], 'thumbnail')}
+        state = 'offline' if file.get('availability') == 'offline' else 'ready'
+        if state == 'ready' and (Path(file['path']).is_symlink() or not Path(file['path']).is_file()):
+            state = 'missing'
+        return {**file, 'thumbnail_state': state, 'kind': kind(file['name']), 'media_url': self.url(file['id']), 'thumbnail_url': self.url(file['id'], 'thumbnail')}
 
     @staticmethod
     def ranges(text, query, mode):
@@ -165,10 +167,10 @@ class Preview:
 
     def thumbnail(self, fid):
         row, path = self.file(fid)
-        if kind(path) not in {'image', 'video'}:
+        if kind(path) not in {'image', 'video', 'document', 'code'}:
             raise ValueError('No thumbnail for this file type.')
         stat = path.stat()
-        key = hashlib.sha256(f'{path}:{stat.st_mtime_ns}:{stat.st_size}:thumb1'.encode()).hexdigest()
+        key = hashlib.sha256(f'{path}:{stat.st_mtime_ns}:{stat.st_size}:thumb2'.encode()).hexdigest()
         target = self.directory / (key + '.jpg')
         if target.exists():
             return target
@@ -179,19 +181,57 @@ class Preview:
         try:
             if kind(path) == 'image':
                 from PIL import Image, ImageOps
+                if path.suffix.lower() in {'.heic', '.heif'}:
+                    import pillow_heif
+                    pillow_heif.register_heif_opener()
                 with warnings.catch_warnings():
                     warnings.simplefilter('error', Image.DecompressionBombWarning)
                     with Image.open(path) as image:
+                        if image.format == 'JPEG':
+                            image.draft('RGB', (720, 480))
                         if image.width * image.height > 32_000_000:
                             raise ValueError('Image exceeds the thumbnail pixel budget.')
                         image.thumbnail((360, 240))
-                        ImageOps.exif_transpose(image).convert('RGB').save(temporary, 'JPEG', quality=80)
+                        rgba = ImageOps.exif_transpose(image).convert('RGBA')
+                        rgba.thumbnail((360, 240))
+                        background = Image.new('RGB', rgba.size, 'white')
+                        background.paste(rgba, mask=rgba.getchannel('A'))
+                        background.save(temporary, 'JPEG', quality=80)
+            elif path.suffix.lower() == '.pdf':
+                import pypdfium2 as pdfium
+                from .media_analysis import _pdfium_lock
+                with _pdfium_lock:
+                    with pdfium.PdfDocument(str(path)) as document:
+                        page = document[0]
+                        try:
+                            scale = min(360 / page.get_width(), 240 / page.get_height())
+                            bitmap = page.render(scale=scale)
+                            try:
+                                bitmap.to_pil().convert('RGB').save(temporary, 'JPEG', quality=80)
+                            finally:
+                                bitmap.close()
+                        finally:
+                            page.close()
+            elif kind(path) in {'document', 'code'}:
+                from PIL import Image, ImageDraw, ImageFont
+                import textwrap
+                image = Image.new('RGB', (180, 240), '#f5f3ed')
+                draw = ImageDraw.Draw(image)
+                font = ImageFont.truetype(str(Path(__file__).parent / 'web/fonts/JetBrainsMono-Regular.ttf'), 9)
+                draw.text((12, 10), path.suffix.lstrip('.').upper(), font=font, fill='#586454')
+                lines = []
+                for line in row['content'][:4000].splitlines():
+                    lines.extend(textwrap.wrap(line, 26) or [''])
+                    if len(lines) >= 17:
+                        break
+                draw.multiline_text((12, 32), '\n'.join(lines[:17]), font=font, fill='#292e28', spacing=3)
+                image.save(temporary, 'JPEG', quality=80)
             else:
-                executable = shutil.which('ffmpeg')
-                if not executable:
-                    raise ValueError('Video poster unavailable: ffmpeg is not installed. Hover can still preview browser-supported videos.')
+                from .media_analysis import ffmpeg_binary
+                executable = ffmpeg_binary()
+                from .sources import external_env
                 flags = subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0
-                subprocess.run([executable, '-nostdin', '-v', 'error', '-threads', '1', '-filter_threads', '1', '-ss', '0.1', '-i', str(path), '-frames:v', '1', '-vf', 'scale=360:240:force_original_aspect_ratio=decrease', '-y', str(temporary)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=12, check=True, creationflags=flags)
+                subprocess.run([executable, '-nostdin', '-v', 'error', '-threads', '1', '-filter_threads', '1', '-protocol_whitelist', 'file,pipe', '-ss', '0', '-i', str(path), '-frames:v', '1', '-vf', 'scale=360:240:force_original_aspect_ratio=decrease', '-y', str(temporary)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=12, check=True, creationflags=flags, env=external_env())
             os.replace(temporary, target)
             cached = list(self.directory.glob('*.jpg'))
             if len(cached) > 1000:
@@ -201,6 +241,10 @@ class Preview:
                 except OSError:
                     pass
             return target
+        except (ValueError, OSError, subprocess.SubprocessError):
+            raise
+        except Exception as exc:
+            raise ValueError('Thumbnail decoding unavailable: ' + str(exc)) from exc
         finally:
             temporary.unlink(missing_ok=True)
             self.thumbnail_slots.release()

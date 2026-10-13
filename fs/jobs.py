@@ -10,7 +10,7 @@ import threading
 from .resource_limits import budget_command, terminate_tree
 
 
-def run_index(store, root, semantic=True, progress=None, cancel=None):
+def run_index(store, root, semantic=True, progress=None, cancel=None, paths=None):
     """Run expensive extraction and embedding in a separately budgeted process."""
     cancel = cancel or threading.Event()
     progress = progress or (lambda state: None)
@@ -20,6 +20,11 @@ def run_index(store, root, semantic=True, progress=None, cancel=None):
     command.append(str(root))
     done = threading.Event()
     with tempfile.TemporaryDirectory(prefix="worker-", dir=store.directory) as workspace, tempfile.TemporaryFile(mode="w+") as errors:
+        if paths is not None:
+            selected = os.path.join(workspace, 'selected.json')
+            with open(selected, 'w') as stream:
+                json.dump(paths, stream)
+            command.extend(['--paths-file', selected])
         command, env, unit = budget_command(command, store.preferences(), {**os.environ, 'FS_WORKER_TMP': workspace})
         process = subprocess.Popen(command, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=errors, text=True,
                                    env=env, start_new_session=os.name == "posix")

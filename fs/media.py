@@ -6,7 +6,7 @@ from pathlib import Path
 
 VIDEO = set('mp4 m4v mov webm mkv avi mpg mpeg m2ts 3gp ogv'.split())
 AUDIO = set('mp3 wav ogg flac m4a aac opus'.split())
-IMAGE = set('jpg jpeg png gif webp bmp avif tif tiff'.split())
+IMAGE = set('jpg jpeg jpe jfif png apng gif webp bmp avif tif tiff ico tga pnm ppm pgm pbm heic heif psd'.split())
 DOCUMENT = set('pdf docx doc odt rtf txt md rst csv tsv'.split())
 CODE = set('py js jsx ts tsx rs go c cpp h java html css json yaml yml toml sh sql'.split())
 

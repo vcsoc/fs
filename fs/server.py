@@ -19,7 +19,7 @@ from .preview import Preview
 
 
 class Application:
-    def __init__(self, store):
+    def __init__(self, store, watch=False):
         self.store = store
         self.models = ModelManager(store)
         self.token = secrets.token_urlsafe(32)
@@ -32,11 +32,74 @@ class Application:
         self.batch_completed = 0
         self.batch_total = 0
         self.completed_jobs = deque(maxlen=20)
+        from .watcher import LocationWatcher
+        self.watcher = LocationWatcher(store, self.watch_index)
+        if watch:
+            self.watcher.start()
 
-    def start_index(self, root, semantic, setup_choice=None):
-        if root is not None:
-            root = self.store.add_location(root)
+    def watch_index(self, root, paths):
         with self.lock:
+            if self.busy or self.queue:
+                return False
+        with self.store.connect() as db:
+            known = {row['path']: (row['size'], row['modified']) for row in db.execute('SELECT path,size,modified FROM files WHERE path IN (' + ','.join('?' for _ in paths) + ')', paths)}
+        changed = []
+        for value in paths:
+            try:
+                stat = Path(value).stat()
+                if known.get(value) != (stat.st_size, stat.st_mtime):
+                    changed.append(value)
+            except OSError:
+                pass
+        if not changed:
+            return True
+        runtime = self.models.status()
+        if not runtime['direct_ready'] and runtime['backend'] == 'direct':
+            return False
+        return self.start_index(root, True, paths=changed, automatic=True) is not None
+
+    def import_paths(self, values, semantic=True):
+        if not isinstance(values, list) or not 1 <= len(values) <= 200:
+            raise ValueError('Drop between 1 and 200 files or folders.')
+        groups, folders = {}, []
+        with self.store.connect() as db:
+            locations = [dict(row) for row in db.execute('SELECT root,scope FROM locations')]
+        for value in values:
+            path = Path(value)
+            if not path.is_absolute() or path.is_symlink() or 'vault' in path.parts or path.resolve().is_relative_to(self.store.directory.resolve()):
+                raise ValueError('Cannot import symlinks, protected folders or private index data.')
+            path = path.resolve()
+            if path.is_dir():
+                folders.append(str(path))
+            elif path.is_file():
+                roots = [row['root'] for row in locations if path.is_relative_to(row['root'])]
+                root = max(roots, key=len) if roots else str(path.parent)
+                groups.setdefault(root, []).append(str(path))
+            else:
+                raise ValueError('A dropped file is no longer available.')
+        with self.lock:
+            if len(self.queue) + len(groups) + len(folders) > 100:
+                raise ValueError('Not enough space in the indexing queue.')
+        for root, paths in groups.items():
+            self.store.add_location(root, scope='selected')
+            with self.store.connect() as db:
+                db.executemany('INSERT OR IGNORE INTO location_files VALUES(?,?)', [(root, path) for path in paths])
+            self.start_index(root, semantic, paths=paths)
+        for root in set(folders):
+            with self.store.connect() as db:
+                db.execute("UPDATE locations SET scope='recursive' WHERE root=?", (root,))
+            self.start_index(root, semantic)
+        return {'files': sum(map(len, groups.values())), 'folders': len(set(folders))}
+
+    def start_index(self, root, semantic, setup_choice=None, paths=None, automatic=False):
+        if root is not None and not automatic:
+            root = self.store.add_location(root, scope='selected' if paths is not None else 'recursive')
+        with self.lock:
+            if automatic:
+                with self.store.connect() as db:
+                    location = db.execute('SELECT watch_enabled FROM locations WHERE root=?', (root,)).fetchone()
+                if self.busy or self.queue or not location or not location['watch_enabled']:
+                    return None
             if len(self.queue) >= 100:
                 raise ValueError('The indexing queue is full (100 locations).')
             if not self.busy:
@@ -46,7 +109,7 @@ class Application:
             job_id = secrets.token_hex(12)
             self.store.apply_preferences()
             selected_model = self.store.embedder.model
-            self.queue.append((root, semantic, setup_choice, job_id, selected_model))
+            self.queue.append((root, semantic, setup_choice, job_id, selected_model, paths))
             queued = self.busy
             if not self.busy:
                 self._next_locked()
@@ -56,13 +119,13 @@ class Application:
             return result
 
     def _next_locked(self):
-        root, semantic, setup_choice, job_id, selected_model = self.queue.popleft()
+        root, semantic, setup_choice, job_id, selected_model, paths = self.queue.popleft()
         self.busy = True
         self.cancel.clear()
         self.job = {'id': job_id, 'kind': 'model' if root is None else 'index', 'model': selected_model, 'state': 'running', 'scanned': 0, 'updated': 0, 'path': root, 'root': root}
-        threading.Thread(target=self._run_index, args=(root, semantic, setup_choice), daemon=True).start()
+        threading.Thread(target=self._run_index, args=(root, semantic, setup_choice, paths), daemon=True).start()
 
-    def _run_index(self, root, semantic, setup_choice):
+    def _run_index(self, root, semantic, setup_choice, paths=None):
         def progress(state):
             with self.lock:
                 self.job = {**self.job, **state, "phase": state.get("phase", "indexing"), "state": "running"}
@@ -80,7 +143,7 @@ class Application:
                     raise ValueError('Selected model changed while setup was queued. Retry setup for the new selection.')
                 if semantic:
                     self.models.prepare(choice=setup_choice, progress=progress, cancel=self.cancel)
-                result = run_index(self.store, root, semantic=semantic, progress=progress, cancel=self.cancel) if root is not None else {"scanned": 0, "updated": 0, "removed": 0, "errors": 0, "cancelled": self.cancel.is_set()}
+                result = run_index(self.store, root, semantic=semantic, progress=progress, cancel=self.cancel, **({'paths': paths} if paths is not None else {})) if root is not None else {"scanned": 0, "updated": 0, "removed": 0, "errors": 0, "cancelled": self.cancel.is_set()}
                 with self.lock:
                     self.job = {**self.job, **result, "state": "cancelled" if result["cancelled"] else "complete"}
             except Exception as exc:
@@ -97,7 +160,7 @@ class Application:
 
 
 def serve(store: Store, port=0, browser=False):
-    app = Application(store)
+    app = Application(store, watch=True)
     web = Path(__file__).parent / "web"
 
     class Handler(BaseHTTPRequestHandler):
@@ -137,13 +200,17 @@ def serve(store: Store, port=0, browser=False):
                 if path == "/api/status":
                     with app.lock:
                         job = {**app.job, 'queued': [item[0] for item in app.queue], 'queued_jobs': [{'id': item[3], 'kind': 'model' if item[0] is None else 'index'} for item in app.queue], 'completed': list(app.completed_jobs), 'batch_completed': app.batch_completed, 'batch_total': app.batch_total}
-                    return self.reply(200, {**store.status(), "job": job, "model_runtime": app.models.status()})
+                    result = store.status()
+                    for root in result['roots']:
+                        root['watch_status'] = app.watcher.states.get(root['root'], 'Starting watcher' if root['watch_enabled'] else 'Paused')
+                    return self.reply(200, {**result, "job": job, "model_runtime": app.models.status()})
                 if path == '/api/favourites':
                     return self.reply(200, app.preview.favourites())
                 if path == "/api/model/status":
                     return self.reply(200, app.models.status(probe=True))
                 return self.reply(404, {"error": "Not found"})
             assets = {"/": ("index.html", "text/html; charset=utf-8"), "/style.css": ("style.css", "text/css"), "/app.js": ("app.js", "text/javascript"), "/browser.js": ("browser.js", "text/javascript"), "/layouts.css": ("layouts.css", "text/css"), "/icon.svg": ("icon.svg", "image/svg+xml")}
+            assets['/file-transfer.js'] = ('file-transfer.js', 'text/javascript')
             assets['/match-playback.js'] = ('match-playback.js', 'text/javascript')
             assets['/media-controls.js'] = ('media-controls.js', 'text/javascript')
             assets['/timeline.js'] = ('timeline.js', 'text/javascript')
@@ -225,13 +292,28 @@ def serve(store: Store, port=0, browser=False):
                 return self.reply(403, {"error": "Unauthorized"})
             try:
                 length = int(self.headers.get("Content-Length", "0"))
-                if not 0 < length <= 16384:
+                if not 0 < length <= (1048576 if urlparse(self.path).path == '/api/import' else 16384):
                     raise ValueError("Invalid request size")
                 body = json.loads(self.rfile.read(length))
                 path = urlparse(self.path).path
                 if path == "/api/search":
                     result = store.search(**body)
                     result['results'] = [app.preview.decorate(file) for file in result['results']]
+                elif path == '/api/import':
+                    result = app.import_paths(body['paths'], body.get('semantic', True))
+                elif path == '/api/watch':
+                    if not isinstance(body.get('enabled'), bool):
+                        raise ValueError('Watcher setting must be a boolean.')
+                    with store.connect() as db:
+                        if not db.execute('SELECT root FROM locations WHERE root=?', (body['root'],)).fetchone():
+                            raise ValueError('Unknown location.')
+                        db.execute('UPDATE locations SET watch_enabled=? WHERE root=?', (body['enabled'], body['root']))
+                    result = {'enabled': body['enabled']}
+                elif path == '/api/transfer':
+                    ids = body['ids']
+                    if not isinstance(ids, list) or not 1 <= len(ids) <= 200 or any(type(fid) is not int for fid in ids):
+                        raise ValueError('Select between 1 and 200 indexed files.')
+                    result = {'paths': [str(app.preview.file(fid)[1]) for fid in dict.fromkeys(ids)]}
                 elif path == '/api/preview':
                     result = app.preview.get(body['id'], body.get('query', ''), body.get('mode', 'hybrid'), body.get('minimum_relevance', store.preferences()['accuracy']))
                 elif path == '/api/favourites':
@@ -262,6 +344,8 @@ def serve(store: Store, port=0, browser=False):
                 elif path == "/api/preferences":
                     result = store.save_preferences(body)
                 elif path == "/api/cancel":
+                    with store.connect() as db:
+                        db.execute('UPDATE locations SET watch_enabled=0')
                     with app.lock:
                         app.batch_total -= len(app.queue)
                         for item in app.queue:
@@ -273,7 +357,7 @@ def serve(store: Store, port=0, browser=False):
                     with app.lock:
                         if app.busy:
                             raise ValueError("Wait for indexing to finish.")
-                    store.remove_root(body["root"])
+                        store.remove_root(body["root"])
                     result = {"removed": True}
                 elif path == "/api/open":
                     with store.connect() as db:
@@ -306,6 +390,7 @@ def serve(store: Store, port=0, browser=False):
     except KeyboardInterrupt:
         pass
     finally:
+        app.watcher.close()
         app.cancel.set()
         server.server_close()
         app.models.close()

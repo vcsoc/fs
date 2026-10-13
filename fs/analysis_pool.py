@@ -18,6 +18,8 @@ def analyse_file(path, prefs, embedder, semantic, existing, embedded, cancel, no
         stat = path.stat()
         caption_stamp = caption_fingerprint(path)
         fingerprint = f"{stat.st_mtime_ns}:{stat.st_size}:{stat.st_ctime_ns}:{prefs['max_file_mb']}:{prefs['max_chunks']}:timestamps-v1:multimodal-v1:timed-cues-v1" + caption_stamp
+        if kind(path) == 'image':
+            fingerprint += ':oriented-images-v2'
         old = existing.get(str(path))
         if old and old['fingerprint'] == fingerprint and not old['error'] and (not semantic or old['id'] in embedded):
             result['unchanged'] = True

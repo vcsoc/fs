@@ -18,6 +18,7 @@ def main():
     parser.add_argument("--model", required=True)
     parser.add_argument("--ollama-url", required=True)
     parser.add_argument("--no-semantic", action="store_true")
+    parser.add_argument('--paths-file')
     parser.add_argument("root")
     args = parser.parse_args()
     with sqlite3.connect(Path(args.data_dir) / "index.sqlite3") as db:
@@ -111,7 +112,8 @@ def main():
     try:
         from .core import Embedder, Store
         store = Store(args.data_dir, Embedder(args.model, args.ollama_url))
-        result = {'cancelled': True} if cancel.is_set() else store.index(args.root, semantic=not args.no_semantic, progress=lambda state: emit({**state, 'resource_enforcement': os.environ.get('FS_WORKER_ENFORCEMENT', 'thread budgets + aggregate RSS watchdog'), "state": "running"}), cancel=cancel)
+        selected = json.loads(Path(args.paths_file).read_text()) if args.paths_file else None
+        result = {'cancelled': True} if cancel.is_set() else store.index(args.root, paths=selected, semantic=not args.no_semantic, progress=lambda state: emit({**state, 'resource_enforcement': os.environ.get('FS_WORKER_ENFORCEMENT', 'thread budgets + aggregate RSS watchdog'), "state": "running"}), cancel=cancel)
         result['cancelled'] = result['cancelled'] or cancel.is_set()
         emit({**result, 'resource_enforcement': os.environ.get('FS_WORKER_ENFORCEMENT', 'thread budgets + aggregate RSS watchdog'), "state": "cancelled" if result["cancelled"] else "complete"})
         return 0

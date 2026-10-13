@@ -11,7 +11,7 @@ subprocess.run([
     "--workpath", str(root / "build/pyinstaller"), "--specpath", str(root / "build"),
     "--paths", str(root), "--collect-all", "numpy", "--collect-all", "pypdf",
     "--collect-all", "docx", "--collect-all", "regex", "--collect-all", "onnxruntime",
-    "--collect-all", "tokenizers", "--collect-all", "zstandard", "--collect-all", "PIL",
+    "--collect-all", "tokenizers", "--collect-all", "zstandard", "--collect-all", "PIL", '--collect-all', 'pillow_heif',
     '--collect-all', 'pypdfium2', '--collect-all', 'pypdfium2_raw',
     '--collect-all', 'imageio_ffmpeg', '--copy-metadata', 'imageio-ffmpeg',
     '--collect-data', 'transformers', '--recursive-copy-metadata', 'transformers',

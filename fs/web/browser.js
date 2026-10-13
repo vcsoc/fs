@@ -100,6 +100,7 @@ $('show-favourites').onclick = () => scopeFolder('', true);
 function selectionChanged() {
   $('selection-count').textContent = selectedFiles.size ? '(' + selectedFiles.size + ')' : '';
   $('favourite-selected').disabled = selectedFiles.size === 0;
+  $('copy-selected').disabled = selectedFiles.size === 0 || !window.fsDesktop?.copyFiles;
 }
 async function refreshFavourites() {
   favouriteEntries = await api('favourites');
@@ -164,10 +165,15 @@ async function hoverMediaURL(file) {
 function thumbnail(file) {
   const holder = element('div', 'file-thumbnail');
   holder.append(element('span', 'file-extension', file.name.includes('.') ? file.name.split('.').pop().slice(0, 5).toUpperCase() : 'FILE'));
-  if (['image', 'video'].includes(file.kind)) {
+  if (file.thumbnail_state === 'missing' || file.thumbnail_state === 'offline') {
+    const missing = element('span', 'thumbnail-unavailable', file.thumbnail_state === 'missing' ? 'Missing file' : 'Offline');
+    holder.append(missing); holder.title = file.thumbnail_state === 'missing' ? 'Cached result: the original file no longer exists at this path. Rescan its location to remove stale entries.' : 'Location offline; reconnect to load its preview.';
+    return holder;
+  }
+  if (['image', 'video', 'document', 'code'].includes(file.kind)) {
     const image = element('img');
     image.loading = 'lazy'; image.decoding = 'async'; image.alt = ''; image.src = file.thumbnail_url;
-    image.onerror = () => image.remove();
+    image.onerror = () => { image.remove(); holder.append(element('span', 'thumbnail-unavailable', 'Preview unavailable')); holder.title = 'Preview unavailable: this file may be unreadable, unsupported, changed, or the thumbnail generator is busy. Open it for details.'; };
     holder.append(image);
   }
   if (['video', 'audio'].includes(file.kind)) {
@@ -245,6 +251,12 @@ function renderBrowserResults(response) {
   }
   for (const file of response.results) {
     const card = element('article', 'result-card'); card.tabIndex = 0; card.dataset.id = file.id; card.classList.toggle('source-offline', file.availability === 'offline');
+    card.draggable = Boolean(window.fsDesktop?.dragFiles) && !['missing', 'offline'].includes(file.thumbnail_state);
+    card.ondragstart = event => {
+      event.preventDefault(); pauseHover();
+      const ids = selectedFiles.has(file.id) ? [...selectedFiles] : [file.id];
+      window.fsDesktop.dragFiles(ids).catch(report);
+    };
     card.ondblclick = () => openViewer(file);
     card.onkeydown = event => { if (event.key === 'Enter' && event.target === card) openViewer(file); };
     const check = element('input', 'file-select'); check.type = 'checkbox'; check.setAttribute('aria-label', 'Select ' + file.name);

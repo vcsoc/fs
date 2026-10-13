@@ -1,7 +1,8 @@
-const { app, BrowserWindow, dialog, ipcMain, nativeTheme, shell } = require('electron');
+const { app, BrowserWindow, dialog, ipcMain, nativeTheme, shell, clipboard, nativeImage } = require('electron');
 const path = require('node:path');
 const fs = require('node:fs');
 const { ServiceSupervisor } = require('./service-supervisor.cjs');
+const { copyFiles } = require('./file-transfer.cjs');
 
 nativeTheme.themeSource = 'dark';
 if (process.platform === 'linux' && process.env.WAYLAND_DISPLAY) app.commandLine.appendSwitch('ozone-platform', process.env.FS_OZONE_PLATFORM || 'wayland');
@@ -60,6 +61,17 @@ async function recoverService() {
   })().finally(() => { recoveryPromise = null; });
   return recoveryPromise;
 }
+async function transferPaths(event, ids) {
+  if (!window || event.sender !== window.webContents || event.senderFrame !== window.webContents.mainFrame || event.senderFrame.url !== backendUrl + '/') throw new Error('Unauthorized file transfer.');
+  if (!Array.isArray(ids) || !ids.length || ids.length > 200 || ids.some(id => !Number.isSafeInteger(id) || id <= 0)) throw new Error('Select up to 200 indexed files.');
+  const html = await (await fetch(backendUrl + '/', {signal:AbortSignal.timeout(5000)})).text();
+  const token = html.match(/name="fs-token" content="([^"]+)"/)?.[1];
+  if (!token) throw new Error('Local search is disconnected.');
+  const response = await fetch(backendUrl + '/api/transfer', {method:'POST', signal:AbortSignal.timeout(5000), headers:{Authorization:'Bearer ' + token, 'Content-Type':'application/json'}, body:JSON.stringify({ids})});
+  const result = await response.json();
+  if (!response.ok) throw new Error(result.error || 'Original files unavailable.');
+  return result.paths;
+}
 function createSupervisor() {
   const root = app.isPackaged ? process.resourcesPath : path.join(__dirname, '..');
   const venv = path.join(root, '.venv', process.platform === 'win32' ? 'Scripts/python.exe' : 'bin/python');
@@ -99,6 +111,12 @@ app.whenReady().then(async () => {
       if (event.sender !== window.webContents || !event.senderFrame.url.startsWith(backendUrl + '/')) return null;
       const result = await dialog.showOpenDialog(window, {properties:['openDirectory'], title:'Select a drive or folder to index'});
       return result.canceled ? null : result.filePaths[0];
+    });
+    ipcMain.handle('fs:copy-files', async (event, ids) => copyFiles(await transferPaths(event, ids), clipboard));
+    ipcMain.handle('fs:drag-files', async (event, ids) => {
+      const files = await transferPaths(event, ids);
+      event.sender.startDrag({files, icon:nativeImage.createFromPath(path.join(__dirname, 'icon.png'))});
+      return {dragged:files.length};
     });
     ipcMain.handle('fs:retry-service', event => {
       if (event.sender !== window.webContents || event.senderFrame !== window.webContents.mainFrame || event.senderFrame.url !== window.webContents.getURL()) return;

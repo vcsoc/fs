@@ -9,7 +9,7 @@ import subprocess
 import threading
 
 import numpy as np
-from PIL import Image
+from PIL import Image, ImageOps
 
 from .media import kind
 from .sources import external_env
@@ -71,10 +71,15 @@ def inputs(path, budget, cancel, threads=2):
     if budget <= 0:
         return
     if category == 'image':
+        if path.suffix.lower() in {'.heic', '.heif'}:
+            import pillow_heif
+            pillow_heif.register_heif_opener()
         with Image.open(path) as image:
+            if image.format == 'JPEG':
+                image.draft('RGB', (1024, 1024))
             if image.width * image.height > 40_000_000:
                 raise ValueError('Image exceeds the 40-million-pixel analysis budget.')
-            yield {'images': [image], 'description': 'Image content', 'timed': False}
+            yield {'images': [ImageOps.exif_transpose(image)], 'description': 'Image content', 'timed': False}
         return
     if path.suffix.lower() == '.pdf':
         import pypdfium2 as pdfium

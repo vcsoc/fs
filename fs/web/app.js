@@ -131,11 +131,15 @@ function updateLocationCount(label, source) {
   label.title = source.files.toLocaleString() + ' files indexed / ' + (source.total_files == null ? 'total unknown; rescan to count files' : source.total_files.toLocaleString() + ' total files (last discovery)');
 }
 function renderLocations(roots) {
-  const signature = JSON.stringify(roots.map(({root, availability}) => ({root, availability})));
+  const signature = JSON.stringify(roots.map(({root, availability, watch_enabled}) => ({root, availability, watch_enabled})));
   if (signature === locationsSignature) {
     for (const label of document.querySelectorAll('.location-count')) {
       const source = roots.find(item => item.root === label.dataset.root);
       if (source) updateLocationCount(label, source);
+    }
+    for (const label of document.querySelectorAll('.location-watcher')) {
+      const source = roots.find(item => item.root === label.dataset.root);
+      if (source) label.textContent = source.watch_status || (source.watch_enabled ? 'Watcher starting' : 'Paused');
     }
     return;
   }
@@ -162,7 +166,9 @@ function renderLocations(roots) {
     card.oncontextmenu = event => openLocationMenu(event, root.root);
     const text = element('div');
     const count = element('p', 'location-count', root.files.toLocaleString() + ' cached files · ' + root.availability); count.dataset.root = root.root; updateLocationCount(count, root);
-    text.append(element('h2', '', basename(root.root)), element('p', '', root.root), count);
+    const watcher = element('p', 'location-watcher', root.watch_status || (root.watch_enabled ? 'Watcher starting' : 'Paused')); watcher.dataset.root = root.root;
+    watcher.title = root.scope === 'selected' ? 'File-only import: watches only the explicitly selected files, never unrelated siblings.' : 'Checks for new and changed files in bounded discovery slices; waits for stable files and idle indexing. Runs while fs is open.';
+    text.append(element('h2', '', basename(root.root)), element('p', '', root.root), count, watcher);
     const actions = element('div', 'location-actions');
     const reindex = element('button', '', 'Refresh index ↻');
     reindex.onclick = () => showIndex(root.root);
@@ -173,7 +179,9 @@ function renderLocations(roots) {
       catch (error) { report(error); }
     };
     const check = element('button', '', 'Re-check status'); check.onclick = () => recheckLocation(root.root);
-    actions.append(reindex, check, remove); card.append(text, actions); $('location-cards').append(card);
+    const watch = element('button', '', root.watch_enabled ? 'Pause watcher' : 'Resume watcher');
+    watch.onclick = async () => { try { await api('watch', {root:root.root, enabled:!root.watch_enabled}); await refresh(); } catch (error) { report(error); } };
+    actions.append(reindex, check, watch, remove); card.append(text, actions); $('location-cards').append(card);
   }
   if (roots.some(root => root.root === selected)) $('root').value = selected;
   if (searched && status?.job.state !== 'running') scheduleSearch();
@@ -205,6 +213,7 @@ async function refresh() {
   const requestedLayoutRevision = layoutRevision;
   const requestedDuringLayoutSave = layoutPending > 0;
   try {
+    const previousFileCount = status?.files;
     status = await api('status');
     renderLocations(status.roots);
     $('model-name').textContent = status.model;
@@ -222,6 +231,7 @@ async function refresh() {
       $('welcome').hidden = status.files > 0;
       if (status.files > 0) await search();
     }
+    if (searched && previousFileCount !== undefined && previousFileCount !== status.files && status.job.state !== 'running') await search(false);
     const job = status.job;
     updateScanProgress(job);
     updateModelSetupProgress(job);
