@@ -10,6 +10,7 @@ let browserResults = [];
 let favouriteEntries = [];
 const selectedFiles = new Set();
 let hoverVideo = null;
+let hoverAnimation = null;
 let viewerFile = null;
 let viewerData = null;
 let viewerEpoch = 0;
@@ -129,9 +130,22 @@ function timeLabel(value) {
   return minutes + ':' + seconds;
 }
 function pauseHover() {
-  if (!hoverVideo) return;
-  hoverVideo.pause(); hoverVideo.removeAttribute('src'); hoverVideo.load(); hoverVideo.hidden = true;
-  hoverVideo = null;
+  if (hoverAnimation) { hoverAnimation.close(); hoverAnimation = null; }
+  if (hoverVideo) {
+    hoverVideo.pause(); hoverVideo.removeAttribute('src'); hoverVideo.load(); hoverVideo.hidden = true;
+    hoverVideo = null;
+  }
+}
+function pointerRatio(holder, event) {
+  const rect = holder.getBoundingClientRect();
+  return Math.max(0, Math.min(1, (event.clientX - rect.left) / Math.max(1, rect.width)));
+}
+async function hoverMediaURL(file) {
+  const expires = Number(new URL(file.media_url, location.href).searchParams.get('expires') || Infinity);
+  if (expires * 1000 > Date.now() + 60000) return file.media_url;
+  const fresh = await api('preview', {id:file.id, query:'', mode:'filename'});
+  file.media_url = fresh.media_url;
+  return fresh.media_url;
 }
 function thumbnail(file) {
   const holder = element('div', 'file-thumbnail');
@@ -145,27 +159,47 @@ function thumbnail(file) {
   if (file.kind === 'video') {
     holder.append(element('span', 'video-badge', '▷ muted'));
     const video = element('video', 'hover-video');
-    video.muted = true; video.defaultMuted = true; video.playsInline = true; video.preload = 'none'; video.hidden = true;
+    video.muted = true; video.defaultMuted = true; video.playsInline = true; video.loop = true; video.preload = 'none'; video.hidden = true;
     video.setAttribute('muted', ''); video.setAttribute('aria-label', 'Muted video hover preview');
     video.onvolumechange = () => { if (!video.muted) video.muted = true; };
-    let ratio = 0, lastSeek = 0;
+    let ratio = 0, lastSeek = 0, seekTimer;
+    video.onerror = () => { holder.title = 'Inline preview unavailable: ' + (video.error?.message || 'media could not be decoded'); };
     const seek = () => {
-      if (video.readyState < 1 || !Number.isFinite(video.duration)) return;
+      if (hoverVideo !== video || video.readyState < 1 || !Number.isFinite(video.duration)) return;
       video.currentTime = Math.max(0, Math.min(video.duration - 0.05, ratio * video.duration));
-      video.play().catch(() => {});
+      video.play().catch(error => { if (hoverVideo === video) holder.title = 'Inline preview paused: ' + error.message; });
     };
     video.onloadedmetadata = seek;
-    holder.onpointerenter = event => {
+    holder.onpointerenter = async event => {
+      if (event.pointerType === 'touch') return;
       pauseHover(); hoverVideo = video; video.hidden = false;
-      const rect = holder.getBoundingClientRect(); ratio = Math.max(0, Math.min(1, (event.clientX - rect.left) / rect.width));
-      video.src = file.media_url; video.load();
+      ratio = pointerRatio(holder, event);
+      try {
+        const url = await hoverMediaURL(file);
+        if (hoverVideo === video) { video.src = url; video.load(); }
+      } catch (error) { if (hoverVideo === video) { holder.title = error.message; pauseHover(); } }
     };
     holder.onpointermove = event => {
-      const rect = holder.getBoundingClientRect(); ratio = Math.max(0, Math.min(1, (event.clientX - rect.left) / rect.width));
-      if (performance.now() - lastSeek > 90) { lastSeek = performance.now(); seek(); }
+      ratio = pointerRatio(holder, event);
+      clearTimeout(seekTimer);
+      seekTimer = setTimeout(() => { lastSeek = performance.now(); seek(); }, Math.max(0, 90 - (performance.now() - lastSeek)));
     };
-    holder.onpointerleave = () => { if (hoverVideo === video) pauseHover(); };
+    holder.onpointerleave = () => { clearTimeout(seekTimer); if (hoverVideo === video) pauseHover(); };
     holder.append(video);
+  } else if (file.kind === 'image' && /\.(gif|webp|png)$/i.test(file.name)) {
+    const canvas = element('canvas', 'hover-animation'); canvas.hidden = true;
+    canvas.setAttribute('aria-label', 'Animated image hover preview');
+    holder.append(canvas);
+    holder.onpointerenter = async event => {
+      if (event.pointerType === 'touch') return;
+      pauseHover();
+      const preview = new AnimatedThumbnailPreview(canvas); hoverAnimation = preview;
+      preview.scrub(pointerRatio(holder, event));
+      try { const url = await hoverMediaURL(file); if (!preview.closed) await preview.load(url, 'image/' + file.name.split('.').pop().toLowerCase()); }
+      catch (error) { if (!preview.closed) { holder.title = error.message; preview.close(); } }
+    };
+    holder.onpointermove = event => { if (hoverAnimation?.canvas === canvas) hoverAnimation.scrub(pointerRatio(holder, event)); };
+    holder.onpointerleave = () => { if (hoverAnimation?.canvas === canvas) pauseHover(); };
   }
   return holder;
 }

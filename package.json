@@ -1,6 +1,6 @@
 {
   "name": "fs-desktop",
-  "version": "0.1.2",
+  "version": "0.2.0",
   "private": true,
   "description": "Local-first semantic file search",
   "author": "Chris Visser",
@@ -8,7 +8,7 @@
   "main": "desktop/main.cjs",
   "scripts": {
     "start": "node desktop/launch.cjs",
-    "check": "node --check desktop/main.cjs && node --check desktop/preload.cjs && node --check desktop/launch.cjs && node --check fs/web/app.js && node --check fs/web/browser.js",
+    "check": "node --check desktop/main.cjs && node --check desktop/preload.cjs && node --check desktop/launch.cjs && node --check fs/web/app.js && node --check fs/web/browser.js && node --check fs/web/animated-preview.js",
     "pack": "electron-builder --dir --publish never",
     "dist": "electron-builder --publish never"
   },
