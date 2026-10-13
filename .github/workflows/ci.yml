@@ -26,6 +26,7 @@ jobs:
       - run: npm ci
       - run: uv run pytest -q
       - run: npm run check
+      - run: npm run test:desktop
       - name: Build bundled backend
         if: github.event_name == 'workflow_dispatch' && inputs.package
         run: uv run python scripts/build_backend.py

@@ -283,20 +283,22 @@ function highlighted(container, text, ranges) {
   container.replaceChildren(fragment);
 }
 function closeViewer() {
-  viewerEpoch++; pauseHover();
+  viewerEpoch++; pauseHover(); closeMediaControls();
   for (const media of $('viewer-body').querySelectorAll('video,audio')) { media.pause(); media.removeAttribute('src'); media.load(); }
   pdfObserver?.disconnect(); pdfObserver = null;
   for (const task of pdfRenderTasks) task.cancel(); pdfRenderTasks.clear();
   pdfDocument?.loadingTask?.destroy().catch(() => {}); pdfDocument = null;
   $('viewer-body').replaceChildren(); $('video-sections').replaceChildren(); $('video-timeline').replaceChildren();
   if ($('viewer-dialog').open) $('viewer-dialog').close();
+  document.body.append($('service-recovery'));
 }
 $('viewer-close').onclick = closeViewer;
 $('viewer-dialog').addEventListener('cancel', event => { event.preventDefault(); closeViewer(); });
 function jumpMatch(delta) {
-  const marks = $('viewer-body').querySelectorAll('mark,.pdf-highlight');
+  const marks = $('viewer-dialog').querySelectorAll('#viewer-body mark,.pdf-highlight,#video-matches mark');
   if (!marks.length) return;
   matchPosition = (matchPosition + delta + marks.length) % marks.length;
+  const details = marks[matchPosition].closest('details'); if (details) details.open = true;
   marks[matchPosition].scrollIntoView({block: 'center', behavior: 'smooth'});
   for (const mark of marks) mark.classList.remove('current-match'); marks[matchPosition].classList.add('current-match');
 }
@@ -367,35 +369,77 @@ async function pdfPreview(data, epoch) {
 }
 function mediaPreview(data) {
   const media = element(data.kind === 'audio' ? 'audio' : 'video', 'viewer-media');
-  media.controls = true; media.autoplay = data.kind === 'video'; media.muted = true; media.defaultMuted = true; media.setAttribute('muted', ''); media.playsInline = true; media.preload = 'metadata'; media.src = data.media_url;
+  media.controls = false; media.autoplay = data.kind === 'video'; media.muted = true; media.defaultMuted = true; media.setAttribute('muted', ''); media.playsInline = true; media.preload = 'metadata'; media.src = data.media_url;
   media.onerror = () => { $('viewer-notice').textContent = media.error?.code === 2 ? 'Media could not be read. Re-check the location connection, then reopen the video.' : 'This codec could not be decoded by the built-in player. Use Open in system app for this file. ' + (media.error?.message || ''); };
-  media.onvolumechange = () => { $('viewer-mute').textContent = media.muted ? 'Sound off' : 'Sound on'; };
-  $('viewer-mute').hidden = false; $('viewer-mute').textContent = 'Sound off'; $('viewer-mute').onclick = () => { media.muted = !media.muted; };
   media.ontimeupdate = () => { if (clipEnd !== null && media.currentTime >= clipEnd) { media.pause(); clipEnd = null; } };
   media.onseeking = () => { if (clipEnd !== null && media.currentTime > clipEnd) clipEnd = null; };
   $('viewer-body').replaceChildren(media);
-  if (data.text) { const transcript = element('pre', 'document-text transcript'); highlighted(transcript, data.text, data.matches); $('viewer-body').append(transcript); }
-  $('video-matches').hidden = !data.sections.length;
+  $('video-matches').hidden = !data.sections.length && !data.text;
   const jump = section => { media.currentTime = section.start; clipEnd = section.end; media.play().catch(error => { $('viewer-notice').textContent = error.message; }); };
   for (const section of data.sections) {
     const button = element('button', 'video-section');
     button.append(element('strong', '', timeLabel(section.start) + ' → ' + timeLabel(section.end)), element('span', '', section.text), element('small', '', section.type === 'semantic' ? 'Related passage · similarity ' + section.score : 'Caption text match'));
     button.onclick = () => jump(section); $('video-sections').append(button);
   }
-  media.onloadedmetadata = () => {
-    if (!Number.isFinite(media.duration) || media.duration <= 0) return;
-    for (const section of data.sections) {
-      if (section.start >= media.duration) continue;
-      const marker = element('button', 'timeline-marker ' + section.type);
-      marker.style.left = (100 * section.start / media.duration) + '%'; marker.style.width = Math.max(0.6, 100 * (Math.min(section.end, media.duration) - section.start) / media.duration) + '%';
-      marker.title = timeLabel(section.start) + ' → ' + timeLabel(section.end) + ': ' + section.text; marker.setAttribute('aria-label', marker.title); marker.onclick = () => jump(section); $('video-timeline').append(marker);
-    }
+  if (data.text) {
+    const details = element('details', 'media-transcript'); details.append(element('summary', '', 'Caption text'));
+    const transcript = element('pre', 'document-text transcript'); highlighted(transcript, data.text, data.matches);
+    details.append(transcript); $('video-sections').append(details);
+  }
+  setupMediaControls(media, data, () => { clipEnd = null; });
+}
+function showServiceRecovery(message, failed = false) {
+  const parent = $('viewer-dialog').open ? $('viewer-dialog') : document.body;
+  parent.append($('service-recovery'));
+  $('service-recovery-message').textContent = message;
+  $('service-retry').hidden = !failed || !window.fsDesktop;
+  $('service-recovery').hidden = false;
+}
+$('service-dismiss').onclick = () => { $('service-recovery').hidden = true; };
+$('service-retry').onclick = () => window.fsDesktop?.retryService();
+function captureRecoveryState() {
+  const media = $('viewer-body').querySelector('video,audio');
+  return {
+    query:$('query').value, mode, filters:Object.fromEntries(filterIds.map(id => [id, $(id).value])),
+    accuracy:$('accuracy').value, browserType, browserFolder, favouriteOnly, browserSort, browserDescending,
+    sidebarCollapsed:document.body.classList.contains('sidebar-collapsed'),
+    viewer:$('viewer-dialog').open && viewerFile ? {id:viewerFile.id, name:viewerFile.name} : null,
+    media:media ? {time:media.currentTime, playing:!media.paused, muted:media.muted, volume:media.volume, rate:media.playbackRate, clipEnd} : null,
+    activeScan:['running','queued'].includes(status?.job?.state),
   };
+}
+async function restoreRecoveryState(state) {
+  if (!state) return;
+  await refresh();
+  $('query').value = state.query; mode = state.mode;
+  for (const [id, value] of Object.entries(state.filters)) $(id).value = value;
+  $('accuracy').value = state.accuracy;
+  browserType = state.browserType; browserFolder = state.browserFolder; favouriteOnly = state.favouriteOnly;
+  browserSort = state.browserSort; browserDescending = state.browserDescending; sidebar(state.sidebarCollapsed);
+  for (const button of document.querySelectorAll('.mode-tabs button')) button.classList.toggle('active', button.dataset.mode === mode);
+  for (const button of document.querySelectorAll('[data-type]')) button.classList.toggle('active', button.dataset.type === browserType);
+  for (const header of document.querySelectorAll('[data-sort]')) {
+    header.querySelector('span').textContent = header.dataset.sort === browserSort ? browserDescending ? '↓' : '↑' : '';
+  }
+  await search();
+  if (!state.viewer) return;
+  await openViewer(state.viewer);
+  const media = $('viewer-body').querySelector('video,audio');
+  if (!media || !state.media) return;
+  media.pause();
+  if (media.readyState < 1) await new Promise(resolve => {
+    const finish = () => { clearTimeout(timer); media.removeEventListener('loadedmetadata', finish); media.removeEventListener('error', finish); resolve(); };
+    const timer = setTimeout(finish, 10000);
+    media.addEventListener('loadedmetadata', finish); media.addEventListener('error', finish);
+  });
+  if (Number.isFinite(media.duration)) media.currentTime = Math.max(0, Math.min(media.duration - .001, state.media.time));
+  media.volume = state.media.volume; media.playbackRate = state.media.rate; media.muted = state.media.muted; clipEnd = state.media.clipEnd;
+  if (state.media.playing) media.play().catch(error => { $('viewer-notice').textContent = 'Playback paused after reconnect: ' + error.message; });
 }
 async function openViewer(file) {
   closeViewer(); viewerFile = file; const epoch = viewerEpoch; matchPosition = -1; clipEnd = null;
   $('viewer-title').textContent = file.name; $('viewer-path').textContent = 'Loading preview…'; $('viewer-notice').textContent = ''; $('viewer-match-count').textContent = '';
-  $('viewer-mute').hidden = true; $('viewer-text-toggle').hidden = true; $('video-matches').hidden = true;
+  $('viewer-text-toggle').hidden = true; $('video-matches').hidden = true;
   $('viewer-favourite').textContent = '☆'; $('viewer-dialog').showModal();
   try {
     const data = await api('preview', {id: file.id, query: $('query').value, mode, minimum_relevance: Number($('accuracy').value)});

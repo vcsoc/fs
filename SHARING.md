@@ -1,11 +1,11 @@
-# fs 0.3.0 for Linux x86_64
+# fs 0.4.0 for Linux x86_64
 
-Share `fs-0.3.0.AppImage` and `fs-0.3.0.AppImage.sha256` together.
+Share `fs-0.4.0.AppImage` and `fs-0.4.0.AppImage.sha256` together.
 
 ```sh
-sha256sum -c fs-0.3.0.AppImage.sha256
-chmod +x fs-0.3.0.AppImage
-./fs-0.3.0.AppImage
+sha256sum -c fs-0.4.0.AppImage.sha256
+chmod +x fs-0.4.0.AppImage
+./fs-0.4.0.AppImage
 ```
 
 This unsigned AppImage includes Electron, the Python backend, ONNX Runtime, tokenizer dependencies, PDF rendering and a fallback FFmpeg decoder. Recipients do not need Node.js, Python, Ollama or system FFmpeg. This artifact is for Linux x86_64, not Windows/macOS.
@@ -21,7 +21,7 @@ Parallel file workers share one model and one indexing budget. On Linux with a w
 If the host lacks FUSE support, try:
 
 ```sh
-./fs-0.3.0.AppImage --appimage-extract-and-run
+./fs-0.4.0.AppImage --appimage-extract-and-run
 ```
 
 Tested on the development Linux machine; AppImage does not guarantee compatibility with every distribution or older system-library version. macOS/Windows artifacts are not locally verified.
