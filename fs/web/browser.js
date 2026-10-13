@@ -393,7 +393,7 @@ function mediaPreview(data) {
   media.onseeking = () => { if (clipEnd !== null && media.currentTime > clipEnd) clipEnd = null; };
   $('viewer-body').replaceChildren(media);
   $('video-matches').hidden = !data.sections.length && !data.text;
-  const jump = section => { media.currentTime = section.start; clipEnd = section.end; media.play().catch(error => { $('viewer-notice').textContent = error.message; }); };
+  const jump = section => { stopMatchPlayback(); media.currentTime = section.start; clipEnd = section.end; media.play().catch(error => { $('viewer-notice').textContent = error.message; }); };
   for (const section of data.sections) {
     const button = element('button', 'video-section');
     button.append(element('strong', '', timeLabel(section.start) + ' → ' + timeLabel(section.end)), element('span', '', section.text), element('small', '', section.type === 'semantic' ? 'Related passage · similarity ' + section.score : 'Caption text match'));
@@ -422,7 +422,7 @@ function captureRecoveryState() {
     accuracy:$('accuracy').value, browserType, browserFolder, favouriteOnly, browserSort, browserDescending,
     sidebarCollapsed:document.body.classList.contains('sidebar-collapsed'),
     viewer:$('viewer-dialog').open && viewerFile ? {id:viewerFile.id, name:viewerFile.name} : null,
-    media:media ? {time:media.currentTime, playing:!media.paused, muted:media.muted, volume:media.volume, rate:media.playbackRate, clipEnd} : null,
+    media:media ? {time:media.currentTime, playing:!media.paused, muted:media.muted, volume:media.volume, rate:media.playbackRate, clipEnd, matchesOnly:matchingPlaybackActive()} : null,
     activeScan:['running','queued'].includes(status?.job?.state),
   };
 }
@@ -452,10 +452,12 @@ async function restoreRecoveryState(state) {
   });
   if (Number.isFinite(media.duration)) media.currentTime = Math.max(0, Math.min(media.duration - .001, state.media.time));
   media.volume = state.media.volume; media.playbackRate = state.media.rate; media.muted = state.media.muted; clipEnd = state.media.clipEnd;
-  if (state.media.playing) media.play().catch(error => { $('viewer-notice').textContent = 'Playback paused after reconnect: ' + error.message; });
+  if (state.media.matchesOnly) restoreMatchingPlayback(state.media.playing);
+  else if (state.media.playing) media.play().catch(error => { $('viewer-notice').textContent = 'Playback paused after reconnect: ' + error.message; });
 }
 async function openViewer(file) {
   closeViewer(); viewerFile = file; const epoch = viewerEpoch; matchPosition = -1; clipEnd = null;
+  $('viewer-help').hidden = true; $('viewer-help').title = ''; $('viewer-help').removeAttribute('aria-description');
   $('viewer-title').textContent = file.name; $('viewer-path').textContent = 'Loading preview…'; $('viewer-notice').textContent = ''; $('viewer-match-count').textContent = '';
   $('viewer-text-toggle').hidden = true; $('video-matches').hidden = true;
   $('viewer-favourite').textContent = '☆'; $('viewer-dialog').showModal();
@@ -464,7 +466,9 @@ async function openViewer(file) {
     if (epoch !== viewerEpoch) return;
     viewerData = data; viewerFile = data;
     highlighted($('viewer-title'), data.name, data.name_matches || []); $('viewer-path').textContent = data.path + ' · ' + size(data.size) + ' · Added: ' + (data.indexed_at == null ? 'Unknown' : new Date(data.indexed_at * 1000).toLocaleString()) + ' · Analysed: ' + (data.analyzed_at == null ? 'Unknown' : new Date(data.analyzed_at * 1000).toLocaleString()); $('viewer-path').title = $('viewer-path').textContent;
-    $('viewer-notice').textContent = data.warning + (data.truncated ? ' Text preview limited to 100,000 characters.' : '');
+    const information = data.warning + (data.truncated ? ' Text preview limited to 100,000 characters.' : '');
+    $('viewer-help').hidden = !information;
+    $('viewer-help').title = information; $('viewer-help').setAttribute('aria-description', information);
     $('viewer-match-count').textContent = data.matches.length + ' text matches' + (data.matches.some(m => m.type === 'semantic') ? ' / related passages' : '') + (data.sections.length ? ' · ' + data.sections.length + ' timed sections' : '');
     $('previous-match').disabled = $('next-match').disabled = !data.matches.length;
     if (['video', 'audio'].includes(data.kind)) mediaPreview(data);

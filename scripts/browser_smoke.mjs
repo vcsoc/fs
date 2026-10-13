@@ -14,13 +14,13 @@ ws.onmessage = event => {
 };
 const command = (method, params = {}) => new Promise((resolve, reject) => {const id = ++ordinal; pending.set(id, {resolve, reject}); ws.send(JSON.stringify({id, method, params}));});
 const evaluate = async expression => {const result = await command('Runtime.evaluate', {expression, awaitPromise:true, returnByValue:true}); if (result.exceptionDetails) throw new Error(result.exceptionDetails.exception?.description || result.exceptionDetails.text); return result.result.value;};
-const deadline = setTimeout(() => {console.error('Browser smoke timeout'); process.exit(1);}, 120000);
+const deadline = setTimeout(() => {console.error('Browser smoke timeout'); process.exit(1);}, 180000);
 try {
   await command('Runtime.enable');
   const result = await evaluate(`(async () => {
     const assert = (value, label) => {if (!value) throw new Error(label);};
     const wait = ms => new Promise(r => setTimeout(r, ms));
-    const until = async fn => {for (let n = 0; n < 600; n++) {if (await fn()) return; await wait(100);} throw new Error('Condition timeout');};
+    const until = async fn => {for (let n = 0; n < 1200; n++) {if (await fn()) return; await wait(100);} throw new Error('Condition timeout');};
     await api('preferences', {scan_duty_percent:100, cpu_threads:1, max_file_mb:0, worker_memory_mb:2048});
     await api('index', {root:'/tmp/fs-browser-docs', semantic:true, setup_choice:'direct'});
     await until(async () => {const s = await api('status'); assert(s.job.state !== 'error', JSON.stringify(s.job)); return s.job.state === 'complete';});

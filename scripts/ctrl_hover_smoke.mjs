@@ -8,7 +8,7 @@ ws.send(JSON.stringify({id:1,method:'Runtime.evaluate',params:{awaitPromise:true
  const assert=(ok,text)=>{if(!ok)throw new Error(text)};
  const until=async fn=>{for(let n=0;n<160;n++){if(fn())return;await new Promise(r=>setTimeout(r,50));}throw new Error('Ctrl hover timeout')};
  await refresh();await search();clearTimeout(debounce);searchSequence++;const originalSearch=search;search=async()=>{};
- const response=await api('search',{query:'',root:'/tmp/fs-controls-fixtures',limit:20});const files=response.results.filter(file=>['video','audio'].includes(file.kind));assert(files.length===2,'Audio and video fixtures');
+ const response=await api('search',{query:'',root:'/tmp/fs-controls-fixtures',limit:20});const files=response.results.filter(file=>['controls.mp4','controls-audio.wav'].includes(file.name));assert(files.length===2,'Audio and video fixtures');
  const key=(down,held)=>window.dispatchEvent(new KeyboardEvent(down?'keydown':'keyup',{key:'Control',ctrlKey:held,bubbles:true}));
  for(const file of files){
   renderBrowserResults({results:[file],total:1,elapsed_ms:0});const holder=document.querySelector('.file-thumbnail');const rect=holder.getBoundingClientRect();

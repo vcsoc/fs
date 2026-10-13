@@ -15,7 +15,7 @@ ws.send(JSON.stringify({id:1,method:'Runtime.evaluate',params:{awaitPromise:true
  assert(!$('video-timeline').previousElementSibling,'No matching-sections label above seek bar');assert($('video-timeline').querySelectorAll('.timeline-marker').length===2,'Recorded match markers');
  const click=(ratio)=>$('video-timeline').dispatchEvent(new MouseEvent('click',{bubbles:true,detail:1,clientX:bar.left+ratio*bar.width,clientY:bar.top+bar.height/2}));
  click(.4);await until(()=>Math.abs(media.currentTime-media.duration*.4)<.6&&!media.paused);assert(media.muted,'Default muted');
- $('media-play').click();await until(()=>media.paused);assert($('media-play').textContent==='Play','Pause updates control');
+ $('media-play').click();await until(()=>media.paused);assert($('media-play').getAttribute('aria-label')==='Play media','Pause updates control');
  $('media-back').click();await until(()=>media.currentTime<5);$('media-play').click();await until(()=>media.paused);
  const before=media.currentTime;$('media-forward').click();await until(()=>Math.abs(media.currentTime-before-10)<.6);media.pause();
  $('media-speed').value='1.5';$('media-speed').dispatchEvent(new Event('change'));assert(media.playbackRate===1.5,'Speed');

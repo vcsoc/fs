@@ -1,0 +1,26 @@
+const endpoint=process.env.FS_CDP_URL;
+const target=(await(await fetch(endpoint+'/json/list')).json()).find(t=>t.type==='page'&&t.url.startsWith('http://127.0.0.1:'));
+const ws=new WebSocket(target.webSocketDebuggerUrl);await new Promise(r=>ws.onopen=r);
+const timer=setTimeout(()=>process.exit(1),45000);
+ws.onmessage=e=>{const m=JSON.parse(e.data);if(m.id!==1)return;clearTimeout(timer);ws.close();if(m.result?.exceptionDetails){console.error(m.result.exceptionDetails);process.exitCode=1;}else console.log(JSON.stringify(m.result?.result?.value||m,null,2));};
+ws.send(JSON.stringify({id:0,method:'Page.bringToFront'}));
+ws.send(JSON.stringify({id:1,method:'Runtime.evaluate',params:{awaitPromise:true,returnByValue:true,userGesture:true,expression:`(async()=>{
+ const assert=(ok,text)=>{if(!ok)throw new Error(text)};
+ const until=async fn=>{for(let n=0;n<240;n++){if(fn())return;await new Promise(r=>setTimeout(r,50));}throw new Error('Matching toolbar timeout')};
+ await refresh();mode='text';$('query').value='sunbeam';const response=await api('search',{query:'controls.mp4',mode:'filename'});await openViewer(response.results[0]);
+ const media=$('viewer-body').querySelector('video');await until(()=>media.readyState>=2);media.pause();
+ assert(document.querySelector('.media-control-toolbar').getAttribute('role')==='toolbar','Accessible toolbar');
+ for(const id of ['media-back','media-play','media-forward','media-restart','viewer-mute','media-fullscreen'])assert($(id).querySelector('svg')&&$(id).title&&$(id).getAttribute('aria-label'),'Icon and tooltip: '+id);
+ $('media-match-play').click();await until(()=>media.currentTime>=2&&media.currentTime<3&&!media.paused);assert(matchingPlaybackActive(),'Matching mode enabled');
+ await until(()=>media.currentTime>=20&&media.currentTime<21);await until(()=>media.paused&&!matchingPlaybackActive());assert(Math.abs(media.currentTime-21)<.15,'Stops at final listed boundary');
+ $('media-match-play').click();await until(()=>matchingPlaybackActive()&&!media.paused);$('media-play').click();await until(()=>media.paused);assert(matchingPlaybackActive(),'Pause retains matching mode');
+ $('media-forward').click();await until(()=>!matchingPlaybackActive());media.pause();assert($('media-match-play').getAttribute('aria-pressed')==='false','Manual seek exits match-only mode');
+ $('media-match-play').click();await until(()=>matchingPlaybackActive());media.pause();const snapshot=captureRecoveryState();assert(snapshot.media.matchesOnly,'Recovery captures matching mode');await restoreRecoveryState(snapshot);const restored=$('viewer-body').querySelector('video');assert(matchingPlaybackActive()&&restored.paused&&Math.abs(restored.currentTime-snapshot.media.time)<.2,'Recovery restores paused matching mode');stopMatchPlayback();restored.pause();
+ $('video-sections').querySelector('button').click();assert(!matchingPlaybackActive(),'Individual interval playback remains separate');media.pause();
+ const noCaption=await api('search',{query:'no-caption.mp4',mode:'filename'});await openViewer(noCaption.results[0]);
+ assert(!$('viewer-help').hidden&&$('viewer-help').title===viewerData.warning&&$('viewer-help').getAttribute('aria-description')===viewerData.warning,'Warning is a title tooltip');
+ assert(!$('viewer-notice').textContent&&getComputedStyle($('viewer-notice')).display==='none','No informational line above video');
+ assert($('viewer-help').parentElement.contains($('viewer-title')),'Question mark is beside title');assert($('media-match-play').disabled,'No fabricated matching intervals');
+ await openViewer({id:-1,name:'Missing test file'});assert($('viewer-notice').textContent&&getComputedStyle($('viewer-notice')).display!=='none','Actual errors stay visible');closeViewer();
+ return {iconToolbar:true,tooltips:true,matchingPlayback:true,gapsSkipped:true,finalBoundaryStops:true,pauseResume:true,manualSeekCancels:true,recoveryModeRestored:true,questionMarkTooltip:true,informationalLineRemoved:true,errorsRemainVisible:true};
+})()`}}));
