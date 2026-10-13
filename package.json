@@ -1,0 +1,69 @@
+{
+  "name": "fs-desktop",
+  "version": "0.1.2",
+  "private": true,
+  "description": "Local-first semantic file search",
+  "author": "Chris Visser",
+  "homepage": "https://github.com/vcsoc/fs",
+  "main": "desktop/main.cjs",
+  "scripts": {
+    "start": "node desktop/launch.cjs",
+    "check": "node --check desktop/main.cjs && node --check desktop/preload.cjs && node --check desktop/launch.cjs && node --check fs/web/app.js && node --check fs/web/browser.js",
+    "pack": "electron-builder --dir --publish never",
+    "dist": "electron-builder --publish never"
+  },
+  "license": "UNLICENSED",
+  "build": {
+    "appId": "com.vcsoc.fs",
+    "productName": "fs",
+    "executableName": "fs",
+    "icon": "desktop/icon.png",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "desktop/**/*",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "build/backend/fs-service",
+        "to": "backend"
+      }
+    ],
+    "linux": {
+      "target": [
+        "AppImage"
+      ],
+      "category": "Utility"
+    },
+    "mac": {
+      "target": [
+        "dmg"
+      ],
+      "category": "public.app-category.utilities",
+      "hardenedRuntime": false
+    },
+    "win": {
+      "target": [
+        "nsis"
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true
+    },
+    "publish": null
+  },
+  "engines": {
+    "node": ">=22.12.0"
+  },
+  "overrides": {
+    "@electron/get": "5.1.0"
+  },
+  "devDependencies": {
+    "electron": "^44.7.0",
+    "electron-builder": "^26.15.3",
+    "pdfjs-dist": "^6.4.299"
+  }
+}

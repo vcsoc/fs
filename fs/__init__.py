@@ -1,0 +1,3 @@
+"""fs: local-first file search."""
+
+__version__ = "0.1.2"
