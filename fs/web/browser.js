@@ -32,13 +32,16 @@ $('brand-toggle').onclick = () => sidebar(!document.body.classList.contains('sid
 function setLayout(layout) {
   resultLayout = layout;
   localStorage.setItem('fs-layout-v2', layout);
+  hideGalleryDetails();
+  $('results').classList.toggle('justified-gallery', layout === 'masonry');
   $('results').classList.toggle('thumbnail-grid', layout === 'grid');
   $('results').classList.toggle('compact-list', layout === 'list');
   $('results').classList.toggle('hybrid-list', layout === 'hybrid');
   document.body.dataset.resultLayout = layout;
-  for (const name of ['list', 'hybrid', 'grid']) $(name + '-view').setAttribute('aria-pressed', String(layout === name));
+  scheduleGallery();
+  for (const name of ['list', 'hybrid', 'grid', 'masonry']) $(name + '-view').setAttribute('aria-pressed', String(layout === name));
 }
-for (const layout of ['list', 'grid', 'hybrid']) $(layout + '-view').onclick = () => {
+for (const layout of ['list', 'grid', 'hybrid', 'masonry']) $(layout + '-view').onclick = () => {
   layoutRevision++; layoutPending++; setLayout(layout);
   // Preserve click order, and do not let a stale status poll undo local intent.
   layoutSaveChain = layoutSaveChain.then(() => api('preferences', {result_layout:layout}))
@@ -132,6 +135,7 @@ function timeLabel(value) {
 function pauseHover() {
   if (hoverAnimation) { hoverAnimation.close(); hoverAnimation = null; }
   if (hoverVideo) {
+    hoverVideo.parentElement.classList.remove('preview-playing');
     hoverVideo.pause(); hoverVideo.removeAttribute('src'); hoverVideo.load(); hoverVideo.hidden = true;
     hoverVideo = null;
   }
@@ -158,6 +162,7 @@ function thumbnail(file) {
   }
   if (file.kind === 'video') {
     holder.append(element('span', 'video-badge', '▷ muted'));
+    const timeline = thumbnailTimeline(holder, file);
     const video = element('video', 'hover-video');
     video.muted = true; video.defaultMuted = true; video.playsInline = true; video.loop = true; video.preload = 'none'; video.hidden = true;
     video.setAttribute('muted', ''); video.setAttribute('aria-label', 'Muted video hover preview');
@@ -169,10 +174,12 @@ function thumbnail(file) {
       video.currentTime = Math.max(0, Math.min(video.duration - 0.05, ratio * video.duration));
       video.play().catch(error => { if (hoverVideo === video) holder.title = 'Inline preview paused: ' + error.message; });
     };
-    video.onloadedmetadata = seek;
+    video.onloadedmetadata = () => { timeline.matches(video.duration); seek(); };
+    video.ontimeupdate = () => timeline.update(video.currentTime / video.duration);
+    video.onseeking = () => timeline.update(video.currentTime / video.duration);
     holder.onpointerenter = async event => {
       if (event.pointerType === 'touch') return;
-      pauseHover(); hoverVideo = video; video.hidden = false;
+      pauseHover(); hoverVideo = video; video.hidden = false; holder.classList.add('preview-playing');
       ratio = pointerRatio(holder, event);
       try {
         const url = await hoverMediaURL(file);
@@ -186,14 +193,16 @@ function thumbnail(file) {
     };
     holder.onpointerleave = () => { clearTimeout(seekTimer); if (hoverVideo === video) pauseHover(); };
     holder.append(video);
+    queueThumbnailMetadata(video, holder, file);
   } else if (file.kind === 'image' && /\.(gif|webp|png)$/i.test(file.name)) {
+    const timeline = thumbnailTimeline(holder, file);
     const canvas = element('canvas', 'hover-animation'); canvas.hidden = true;
     canvas.setAttribute('aria-label', 'Animated image hover preview');
     holder.append(canvas);
     holder.onpointerenter = async event => {
       if (event.pointerType === 'touch') return;
       pauseHover();
-      const preview = new AnimatedThumbnailPreview(canvas); hoverAnimation = preview;
+      const preview = new AnimatedThumbnailPreview(canvas, ratio => timeline.update(ratio)); hoverAnimation = preview;
       preview.scrub(pointerRatio(holder, event));
       try { const url = await hoverMediaURL(file); if (!preview.closed) await preview.load(url, 'image/' + file.name.split('.').pop().toLowerCase()); }
       catch (error) { if (!preview.closed) { holder.title = error.message; preview.close(); } }
@@ -205,7 +214,7 @@ function thumbnail(file) {
 }
 function dateLabel(stamp) { return stamp == null ? 'Unknown' : new Date(stamp * 1000).toLocaleDateString(); }
 function renderBrowserResults(response) {
-  pauseHover(); selectedFiles.clear(); selectionChanged(); browserResults = response.results;
+  pauseHover(); hideGalleryDetails(); selectedFiles.clear(); selectionChanged(); browserResults = response.results;
   $('results').replaceChildren(); $('welcome').hidden = true;
   $('results-label').textContent = $('query').value.trim() ? 'Search results' : 'Your files';
   $('results-meta').title = 'Percentages are actual semantic cosine similarity. Exact denotes a direct keyword/filename/regex match. Neither is a confidence estimate.';
@@ -224,13 +233,15 @@ function renderBrowserResults(response) {
     check.onchange = () => { check.checked ? selectedFiles.add(file.id) : selectedFiles.delete(file.id); card.classList.toggle('selected', check.checked); selectionChanged(); };
     check.ondblclick = event => event.stopPropagation();
     const preview = thumbnail(file);
+    observeGalleryCard(card, preview, file);
     const main = element('div', 'file-main');
     const title = element('button', 'file-title', file.name); title.onclick = () => openViewer(file);
     const path = element('div', 'file-path', file.path + (file.availability === 'offline' ? ' · OFFLINE (cached)' : '')); path.title = file.path;
     const excerpt = element('p', 'file-excerpt', file.excerpt || '');
     main.append(title, path, excerpt); title.title = file.name;
     const relevance = element('div', 'relevance-cell', file.relevance == null ? '—' : file.relevance_basis === 'literal' ? 'Exact' : file.relevance.toFixed(1) + '%');
-    relevance.title = file.relevance_type || 'Relevance is shown after a search';
+    if (file.error) relevance.append(element('span', 'partial-analysis', ' · partial'));
+    relevance.title = (file.relevance_type || 'Relevance is shown after a search') + (file.error ? ' · Incomplete analysis: ' + file.error : '');
     if (file.relevance != null) { const meter = element('span', 'relevance-meter'); meter.style.width = file.relevance + '%'; relevance.append(meter); }
     const bytes = element('div', 'size-cell', size(file.size));
     const modified = element('div', 'date-cell', dateLabel(file.modified)); modified.title = new Date(file.modified * 1000).toLocaleString();

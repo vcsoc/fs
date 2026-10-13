@@ -5,7 +5,7 @@ import time
 
 import numpy as np
 
-from .media import caption_fingerprint, kind, passages
+from .media import caption_fingerprint, kind, passages, captions
 
 
 def analyse_file(path, prefs, embedder, semantic, existing, embedded, cancel, notify):
@@ -17,7 +17,7 @@ def analyse_file(path, prefs, embedder, semantic, existing, embedded, cancel, no
             return result
         stat = path.stat()
         caption_stamp = caption_fingerprint(path)
-        fingerprint = f"{stat.st_mtime_ns}:{stat.st_size}:{stat.st_ctime_ns}:{prefs['max_file_mb']}:{prefs['max_chunks']}:timestamps-v1:multimodal-v1" + caption_stamp
+        fingerprint = f"{stat.st_mtime_ns}:{stat.st_size}:{stat.st_ctime_ns}:{prefs['max_file_mb']}:{prefs['max_chunks']}:timestamps-v1:multimodal-v1:timed-cues-v1" + caption_stamp
         old = existing.get(str(path))
         if old and old['fingerprint'] == fingerprint and not old['error'] and (not semantic or old['id'] in embedded):
             result['unchanged'] = True
@@ -37,6 +37,10 @@ def analyse_file(path, prefs, embedder, semantic, existing, embedded, cancel, no
         text_budget = prefs['max_chunks'] - media_budget
         segments = passages(path, text_budget) if kind(path) in {'video', 'audio'} and text_budget else []
         parts = ([segment['text'] for segment in segments] or chunks(content, text_budget) or [path.name]) if text_budget else []
+        # Keep exact caption cues independently of grouped embedding passages.
+        # Negative part IDs are metadata-only and cannot alias vector parts.
+        if kind(path) in {'video', 'audio'}:
+            segments.extend({**cue, 'part': -index - 1} for index, cue in enumerate(captions(path)))
         vectors = None
         if semantic:
             rows = []

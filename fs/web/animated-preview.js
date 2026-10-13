@@ -3,7 +3,8 @@
 // Native animated-image decoding keeps GIF/WebP/APNG previews local. Keep only
 // one decoder active, close every frame, and bound input size and frame count.
 class AnimatedThumbnailPreview {
-  constructor(canvas) {
+  constructor(canvas, position = () => {}) {
+    this.position = position;
     this.canvas = canvas; this.closed = false; this.ready = false; this.decoder = null;
     this.abort = new AbortController(); this.ratio = 0; this.seek = true;
     this.frame = 0; this.tick = 0;
@@ -26,7 +27,11 @@ class AnimatedThumbnailPreview {
     if (this.closed) return;
     const data = new Uint8Array(bytes); let at = 0;
     for (const part of parts) { data.set(part, at); at += part.byteLength; }
-    this.decoder = new ImageDecoder({data, type, preferAnimation:true, desiredWidth:384, desiredHeight:384});
+    const poster = this.canvas.parentElement.querySelector('img');
+    const ratio = poster?.naturalWidth && poster?.naturalHeight ? poster.naturalWidth / poster.naturalHeight : 1;
+    const desiredWidth = ratio >= 1 ? 384 : Math.max(1, Math.round(384 * ratio));
+    const desiredHeight = ratio >= 1 ? Math.max(1, Math.round(384 / ratio)) : 384;
+    this.decoder = new ImageDecoder({data, type, preferAnimation:true, desiredWidth, desiredHeight});
     await this.decoder.tracks.ready;
     const track = this.decoder.tracks.selectedTrack;
     if (this.closed || !track?.animated) { this.close(); return; }
@@ -43,6 +48,7 @@ class AnimatedThumbnailPreview {
       } finally { image.close(); }
     }
     if (this.closed) return;
+    this.canvas.parentElement.classList.add('preview-playing');
     this.ready = true; this.origin = performance.now();
     this.animate();
   }
@@ -59,6 +65,7 @@ class AnimatedThumbnailPreview {
       this.seek = false;
     }
     const time = (performance.now() - this.origin) % this.duration;
+    this.position(time / this.duration);
     let index = this.starts.length - 1;
     while (index > 0 && this.starts[index] > time) index--;
     try {
@@ -72,6 +79,7 @@ class AnimatedThumbnailPreview {
   }
   close() {
     if (this.closed) return;
+    this.canvas.parentElement.classList.remove('preview-playing');
     this.closed = true; this.abort.abort(); cancelAnimationFrame(this.tick);
     if (this.decoder) this.decoder.close();
     this.canvas.hidden = true;

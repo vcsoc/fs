@@ -44,7 +44,7 @@ def validate(values):
         raise ValueError("Embedding backend must be auto, direct, or ollama.")
     if type(result['accuracy']) not in (int, float) or not 0 <= result['accuracy'] <= 1:
         raise ValueError('Accuracy must be between 0 and 1.')
-    if result['result_layout'] not in {'list', 'hybrid', 'grid'}:
+    if result['result_layout'] not in {'list', 'hybrid', 'grid', 'masonry'}:
         raise ValueError('Unknown result layout.')
     if result["theme"] not in {"dark", "light"}:
         raise ValueError("Theme must be dark or light.")

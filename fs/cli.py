@@ -32,10 +32,13 @@ def parser():
     search.add_argument("--json", action="store_true")
     search.add_argument('--accuracy', type=float, help='Override the shared minimum semantic similarity (0-1) for this search')
     sub.add_parser("status", help="Show indexed locations and model")
+    repair = sub.add_parser('repair-duplicate', help='Recover incomplete media analysis from a byte-verified identical indexed file')
+    repair.add_argument('--source-id', type=int, required=True)
+    repair.add_argument('--target-id', type=int, required=True)
     prefs = sub.add_parser("preferences", help="Show or change persistent resource budgets")
     prefs.add_argument("--theme", choices=["dark", "light"])
     prefs.add_argument('--accuracy', type=float)
-    prefs.add_argument('--result-layout', choices=['list', 'hybrid', 'grid'])
+    prefs.add_argument('--result-layout', choices=['list', 'hybrid', 'grid', 'masonry'])
     prefs.add_argument('--model', dest='saved_model', help='Persist the model for both desktop and CLI')
     prefs.add_argument("--embedding-backend", choices=["auto", "direct", "ollama"])
     prefs.add_argument("--cpu-threads", type=int)
@@ -113,6 +116,9 @@ def main(argv=None):
                 print(f"{result['total']} matches · {result['elapsed_ms']} ms", file=sys.stderr)
                 if result["warning"]:
                     print("Warning: " + result["warning"], file=sys.stderr)
+        elif args.command == 'repair-duplicate':
+            from .duplicates import repair_duplicate
+            print(json.dumps(repair_duplicate(store, args.source_id, args.target_id), indent=2))
         elif args.command == "status":
             print(json.dumps(store.status(), indent=2))
         elif args.command == "preferences":

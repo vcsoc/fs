@@ -451,10 +451,44 @@ class Store:
         revision = self._meta(db, "revision")
         with self.cache_lock:
             if self.vector_cache is None or self.vector_cache[0] != revision:
-                rows = db.execute("SELECT file_id,text,embedding FROM vectors ORDER BY file_id,part").fetchall()
+                # Once real media vectors exist, filename fallback is not content
+                # evidence. Keep filename matching separate from media similarity.
+                rows = db.execute("""SELECT v.file_id,v.text,v.embedding,v.part FROM vectors v JOIN files f ON f.id=v.file_id
+                    WHERE NOT (v.text=f.name AND EXISTS(SELECT 1 FROM media_segments s WHERE s.file_id=f.id))
+                    ORDER BY v.file_id,v.part""").fetchall()
                 matrix = np.stack([np.frombuffer(r[2], dtype="<f4") for r in rows]) if rows else np.empty((0, 0), dtype=np.float32)
                 self.vector_cache = (revision, rows, matrix)
             return self.vector_cache[1:]
+
+    @staticmethod
+    def _timed_matches(db, ids, query, mode, scores):
+        if not ids or not query.strip() or mode == 'filename':
+            return {}
+        words = regex.findall(r'[\p{L}\p{N}_]+', query)
+        expression = query if mode == 'regex' else '|'.join(regex.escape(word) for word in set(words))
+        pattern = regex.compile(expression, regex.IGNORECASE) if expression and mode != 'semantic' else None
+        native_labels = {'Audio content (embedding, not a transcript)', 'Audio / sampled video content (embedding, not a transcript)'}
+        result, seen = {}, set()
+        rows = db.execute('SELECT file_id,part,start,end,text FROM media_segments WHERE file_id IN (' + ','.join('?' for _ in ids) + ') ORDER BY start,end,part', ids).fetchall()
+        cue_files = {row['file_id'] for row in rows if row['part'] < 0}
+        for row in rows:
+            literal = False
+            if pattern and row['text'] not in native_labels and (row['part'] < 0 or row['file_id'] not in cue_files):
+                try:
+                    literal = bool(pattern.search(row['text'], timeout=.015))
+                except TimeoutError:
+                    continue
+            score = scores.get((row['file_id'], row['part']))
+            if literal or score is not None:
+                section = {'start': row['start'], 'end': row['end'], 'text': row['text'][:300], 'type': 'caption' if literal else 'semantic'}
+                if score is not None:
+                    section['score'] = round(score, 3)
+                bucket = result.setdefault(row['file_id'], [])
+                key = (row['file_id'], section['start'], section['end'])
+                if key not in seen:
+                    seen.add(key)
+                    bucket.append(section)
+        return result
 
     def search(self, query="", mode="hybrid", limit=50, filename="", root="", modified_after=None, modified_before=None, created_after=None, created_before=None, file_type="", folder="", favourites_only=False, sort_by='score', sort_desc=True, minimum_relevance=0):
         start = time.monotonic()
@@ -495,6 +529,8 @@ class Store:
             scores, excerpts = {}, {}
             semantic_error = None
             semantic_scores, literal_ids = {}, set()
+            timed_scores = {}
+            timed_files = {fid for fid, file in files.items() if kind(file['name']) in {'audio', 'video'}}
             if not query.strip():
                 scores = {fid: f["modified"] for fid, f in files.items()}
             elif mode == "filename":
@@ -536,6 +572,8 @@ class Store:
                             similarities = matrix @ q
                             for i in np.argsort(-similarities):
                                 fid = vector_rows[i][0]
+                                if fid in timed_files and float(similarities[i]) >= minimum_relevance:
+                                    timed_scores[(fid, vector_rows[i]['part'])] = float(similarities[i])
                                 if fid in files and fid not in semantic_scores:
                                     semantic_scores[fid] = float(similarities[i])
                                     excerpts[fid] = vector_rows[i][1][:280]
@@ -568,7 +606,9 @@ class Store:
                 ranked.sort(key=lambda fid: files[fid][key] is None)
             devices = {row['root']: (row['device'], row['volume']) for row in db.execute('SELECT root,device,volume FROM locations')}
             results = []
-            for fid in ranked[:limit]:
+            visible = ranked[:limit]
+            timed_matches = self._timed_matches(db, visible, query, mode, timed_scores)
+            for fid in visible:
                 file = files[fid]
                 file.pop("content", None)
                 file['availability'] = self.sources.status(file['root'], *devices.get(file['root'], (None, None)))
@@ -578,6 +618,7 @@ class Store:
                 file['relevance_basis'] = 'literal' if fid in literal_ids else 'semantic'
                 file['relevance_type'] = 'Exact filename, keyword or regex match; not confidence' if fid in literal_ids else 'Actual semantic cosine similarity; not confidence'
                 file["excerpt"] = excerpts.get(fid)
+                file['matched_sections'] = timed_matches.get(fid, [])
                 if file["excerpt"] is None:
                     file["excerpt"] = db.execute("SELECT substr(content,1,280) FROM files WHERE id=?", (fid,)).fetchone()[0]
                 results.append(file)
