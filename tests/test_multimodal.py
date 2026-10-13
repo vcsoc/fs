@@ -100,3 +100,19 @@ def test_model_setup_job_id_survives_failure_and_following_jobs(tmp_path, monkey
     assert app.job['id'] == result['job_id']
     assert app.job['state'] == 'error' and app.job['downloaded'] == 10
     assert app.completed_jobs[-1]['id'] == result['job_id']
+
+def test_512_chunks_extend_native_video_coverage(tmp_path, monkeypatch):
+    from fs import media_analysis
+    class Multimodal(FakeEmbedder):
+        supports_media = True
+        def embed_media(self, **inputs):
+            return self.embed(["solar"])
+    monkeypatch.setattr(media_analysis, "probe", lambda *args: (20000, True, False))
+    monkeypatch.setattr(media_analysis, "pcm", lambda *args: np.zeros(160, dtype=np.float32))
+    root = tmp_path / "video"; root.mkdir(); (root / "long.mp4").write_bytes(b"fixture")
+    store = Store(tmp_path / "db", Multimodal())
+    store.save_preferences({"max_chunks": 512, "scan_duty_percent": 100})
+    assert store.index(root)["errors"] == 0
+    with store.connect() as db:
+        assert db.execute("SELECT count(*) FROM vectors").fetchone()[0] == 512
+        assert db.execute("SELECT count(*),max(end) FROM media_segments").fetchone()[:] == (511, 15330)

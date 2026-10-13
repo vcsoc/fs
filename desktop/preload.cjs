@@ -6,4 +6,5 @@ contextBridge.exposeInMainWorld('fsDesktop', {
   droppedPath: file => webUtils.getPathForFile(file),
   dragFiles: ids => ipcRenderer.invoke('fs:drag-files', ids),
   copyFiles: ids => ipcRenderer.invoke('fs:copy-files', ids),
+  textZoom: action => ipcRenderer.send('fs:text-zoom', action),
 });

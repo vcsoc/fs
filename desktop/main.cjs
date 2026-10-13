@@ -1,8 +1,9 @@
-const { app, BrowserWindow, dialog, ipcMain, nativeTheme, shell, clipboard, nativeImage } = require('electron');
+const { app, BrowserWindow, dialog, ipcMain, nativeTheme, shell, clipboard, nativeImage, Menu } = require('electron');
 const path = require('node:path');
 const fs = require('node:fs');
 const { ServiceSupervisor } = require('./service-supervisor.cjs');
 const { copyFiles } = require('./file-transfer.cjs');
+const { attachTextZoom } = require('./text-zoom.cjs');
 
 nativeTheme.themeSource = 'dark';
 if (process.platform === 'linux' && process.env.WAYLAND_DISPLAY) app.commandLine.appendSwitch('ozone-platform', process.env.FS_OZONE_PLATFORM || 'wayland');
@@ -97,6 +98,21 @@ app.whenReady().then(async () => {
       width:1320, height:880, minWidth:760, minHeight:600,
       title:'fs — Find what matters', backgroundColor:'#1e1e1e', icon:path.join(__dirname, 'icon.png'),
       webPreferences:{preload:path.join(__dirname, 'preload.cjs'), contextIsolation:true, nodeIntegration:false, sandbox:true},
+    });
+    const textZoom = attachTextZoom(window.webContents, path.join(process.env.FS_DATA_DIR || app.getPath('userData'), 'text-zoom.json'));
+    Menu.setApplicationMenu(Menu.buildFromTemplate([
+      ...(process.platform === 'darwin' ? [{role:'appMenu'}] : []),
+      {role:'fileMenu'}, {role:'editMenu'},
+      {label:'View', submenu:[
+        {label:'Increase Text Size', accelerator:'CommandOrControl+=', click:() => textZoom.change('in')},
+        {label:'Decrease Text Size', accelerator:'CommandOrControl+-', click:() => textZoom.change('out')},
+        {label:'Reset Text Size', accelerator:'CommandOrControl+0', click:() => textZoom.change('reset')},
+        {type:'separator'}, {role:'togglefullscreen'},
+      ]}, {role:'windowMenu'},
+    ]));
+    ipcMain.on('fs:text-zoom', (event, action) => {
+      if (event.sender !== window.webContents || event.senderFrame !== window.webContents.mainFrame || event.senderFrame.url !== backendUrl + '/' || !['in', 'out', 'reset'].includes(action)) return;
+      textZoom.change(action);
     });
     window.setMenuBarVisibility(false);
     window.webContents.setWindowOpenHandler(({url}) => {

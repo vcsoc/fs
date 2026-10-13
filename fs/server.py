@@ -210,6 +210,7 @@ def serve(store: Store, port=0, browser=False):
                     return self.reply(200, app.models.status(probe=True))
                 return self.reply(404, {"error": "Not found"})
             assets = {"/": ("index.html", "text/html; charset=utf-8"), "/style.css": ("style.css", "text/css"), "/app.js": ("app.js", "text/javascript"), "/browser.js": ("browser.js", "text/javascript"), "/layouts.css": ("layouts.css", "text/css"), "/icon.svg": ("icon.svg", "image/svg+xml")}
+            assets['/text-zoom.js'] = ('text-zoom.js', 'text/javascript')
             assets['/file-transfer.js'] = ('file-transfer.js', 'text/javascript')
             assets['/match-playback.js'] = ('match-playback.js', 'text/javascript')
             assets['/media-controls.js'] = ('media-controls.js', 'text/javascript')

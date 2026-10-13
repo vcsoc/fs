@@ -22,7 +22,7 @@ LIMITS = {
     "scan_duty_percent": (5, 100),
     "worker_memory_mb": (256, 65536),
     "max_file_mb": (0, 1048576),
-    "max_chunks": (1, 256),
+    "max_chunks": (1, 512),
 }
 
 

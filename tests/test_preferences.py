@@ -15,7 +15,9 @@ def test_preferences_persist_and_validate(tmp_path):
     assert Store(store.directory).preferences() == saved
     assert store.embedder.model == "embeddinggemma"
     assert store.embedder.options == {"num_thread": 1, "num_gpu": 0}
-    for invalid in [{"cpu_threads": 0}, {"worker_memory_mb": 1}, {"theme": "purple"}, {"use_gpu": 1}, {"unknown": 42}, {"model": "bad model"}]:
+    store.save_preferences({'max_chunks': 512})
+    assert Store(store.directory).preferences()['max_chunks'] == 512
+    for invalid in [{'max_chunks': 513}, {'max_chunks': 0}, {"cpu_threads": 0}, {"worker_memory_mb": 1}, {"theme": "purple"}, {"use_gpu": 1}, {"unknown": 42}, {"model": "bad model"}]:
         with pytest.raises(ValueError):
             store.save_preferences(invalid)
 
