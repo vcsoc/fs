@@ -10,6 +10,15 @@ let browserResults = [];
 let favouriteEntries = [];
 const selectedFiles = new Set();
 let hoverVideo = null;
+let hoverCtrlHeld = false;
+function updateHoverAudio() {
+  if (hoverVideo) hoverVideo.muted = !hoverCtrlHeld || document.hidden;
+}
+window.addEventListener('keydown', event => { hoverCtrlHeld = event.ctrlKey; updateHoverAudio(); });
+window.addEventListener('keyup', event => { hoverCtrlHeld = event.ctrlKey; updateHoverAudio(); });
+function resetHoverAudio() { hoverCtrlHeld = false; updateHoverAudio(); }
+window.addEventListener('blur', resetHoverAudio);
+document.addEventListener('visibilitychange', () => { if (document.hidden) resetHoverAudio(); });
 let hoverAnimation = null;
 let viewerFile = null;
 let viewerData = null;
@@ -135,6 +144,7 @@ function timeLabel(value) {
 function pauseHover() {
   if (hoverAnimation) { hoverAnimation.close(); hoverAnimation = null; }
   if (hoverVideo) {
+    hoverVideo.muted = true;
     hoverVideo.parentElement.classList.remove('preview-playing');
     hoverVideo.pause(); hoverVideo.removeAttribute('src'); hoverVideo.load(); hoverVideo.hidden = true;
     hoverVideo = null;
@@ -160,13 +170,19 @@ function thumbnail(file) {
     image.onerror = () => image.remove();
     holder.append(image);
   }
-  if (file.kind === 'video') {
-    holder.append(element('span', 'video-badge', '▷ muted'));
+  if (['video', 'audio'].includes(file.kind)) {
+    const badge = element('span', 'video-badge', '▷ muted');
+    badge.title = 'Hold Ctrl while hovering to temporarily enable sound'; holder.append(badge);
+    holder.title = 'Hover to preview · hold Ctrl for sound';
     const timeline = thumbnailTimeline(holder, file);
-    const video = element('video', 'hover-video');
+    const video = element(file.kind === 'audio' ? 'audio' : 'video', file.kind === 'audio' ? 'hover-audio' : 'hover-video');
     video.muted = true; video.defaultMuted = true; video.playsInline = true; video.loop = true; video.preload = 'none'; video.hidden = true;
-    video.setAttribute('muted', ''); video.setAttribute('aria-label', 'Muted video hover preview');
-    video.onvolumechange = () => { if (!video.muted) video.muted = true; };
+    video.setAttribute('muted', ''); video.setAttribute('aria-label', file.kind + ' hover preview; hold Control for temporary sound');
+    video.onvolumechange = () => {
+      const muted = hoverVideo !== video || !hoverCtrlHeld || document.hidden;
+      if (video.muted !== muted) video.muted = muted;
+      badge.textContent = video.muted ? '▷ muted' : '▷ sound';
+    };
     let ratio = 0, lastSeek = 0, seekTimer;
     video.onerror = () => { holder.title = 'Inline preview unavailable: ' + (video.error?.message || 'media could not be decoded'); };
     const seek = () => {
@@ -179,7 +195,8 @@ function thumbnail(file) {
     video.onseeking = () => timeline.update(video.currentTime / video.duration);
     holder.onpointerenter = async event => {
       if (event.pointerType === 'touch') return;
-      pauseHover(); hoverVideo = video; video.hidden = false; holder.classList.add('preview-playing');
+      pauseHover(); hoverVideo = video; video.hidden = file.kind === 'audio'; holder.classList.add('preview-playing');
+      hoverCtrlHeld = event.ctrlKey; updateHoverAudio();
       ratio = pointerRatio(holder, event);
       try {
         const url = await hoverMediaURL(file);
@@ -187,6 +204,7 @@ function thumbnail(file) {
       } catch (error) { if (hoverVideo === video) { holder.title = error.message; pauseHover(); } }
     };
     holder.onpointermove = event => {
+      if (hoverVideo === video) { hoverCtrlHeld = event.ctrlKey; updateHoverAudio(); }
       ratio = pointerRatio(holder, event);
       clearTimeout(seekTimer);
       seekTimer = setTimeout(() => { lastSeek = performance.now(); seek(); }, Math.max(0, 90 - (performance.now() - lastSeek)));
