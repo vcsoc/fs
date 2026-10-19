@@ -4,6 +4,7 @@ let browserFolder = '';
 let favouriteOnly = false;
 let browserSort = 'score';
 let browserDescending = true;
+let thumbnailsShown = true;
 let resultLayout = localStorage.getItem('fs-layout-v2') || 'list';
 let layoutSaveChain = Promise.resolve();
 let browserResults = [];
@@ -42,13 +43,15 @@ function setLayout(layout) {
   resultLayout = layout;
   localStorage.setItem('fs-layout-v2', layout);
   hideGalleryDetails();
+  const requested = layout;
+  if (!thumbnailsShown) layout = 'list';
   $('results').classList.toggle('justified-gallery', layout === 'masonry');
   $('results').classList.toggle('thumbnail-grid', layout === 'grid');
   $('results').classList.toggle('compact-list', layout === 'list');
   $('results').classList.toggle('hybrid-list', layout === 'hybrid');
   document.body.dataset.resultLayout = layout;
   scheduleGallery();
-  for (const name of ['list', 'hybrid', 'grid', 'masonry']) $(name + '-view').setAttribute('aria-pressed', String(layout === name));
+  for (const name of ['list', 'hybrid', 'grid', 'masonry']) $(name + '-view').setAttribute('aria-pressed', String(requested === name));
 }
 for (const layout of ['list', 'grid', 'hybrid', 'masonry']) $(layout + '-view').onclick = () => {
   layoutRevision++; layoutPending++; setLayout(layout);
@@ -165,6 +168,7 @@ async function hoverMediaURL(file) {
 function thumbnail(file) {
   const holder = element('div', 'file-thumbnail');
   holder.append(element('span', 'file-extension', file.name.includes('.') ? file.name.split('.').pop().slice(0, 5).toUpperCase() : 'FILE'));
+  if (!thumbnailsShown) return holder;
   if (file.thumbnail_state === 'missing' || file.thumbnail_state === 'offline') {
     const missing = element('span', 'thumbnail-unavailable', file.thumbnail_state === 'missing' ? 'Missing file' : 'Offline');
     holder.append(missing); holder.title = file.thumbnail_state === 'missing' ? 'Cached result: the original file no longer exists at this path. Rescan its location to remove stale entries.' : 'Location offline; reconnect to load its preview.';

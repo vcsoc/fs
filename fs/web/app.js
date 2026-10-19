@@ -106,13 +106,38 @@ async function rescanLocation(root) {
     await refresh();
   } catch (error) { report(error); }
 }
+let aliasRoot = null;
+function locationLabel(root) { return status?.roots?.find(source => source.root === root)?.alias || basename(root); }
+function renameLocation(root) {
+  aliasRoot = root; $('location-alias-path').textContent = root;
+  $('location-alias-input').value = status?.roots?.find(source => source.root === root)?.alias || '';
+  $('location-alias-error').textContent = ''; $('location-alias-dialog').showModal(); $('location-alias-input').focus();
+}
+$('location-alias-cancel').onclick = () => $('location-alias-dialog').close();
+$('location-alias-form').onsubmit = async event => {
+  event.preventDefault();
+  try {
+    await api('source/alias', {root:aliasRoot, alias:$('location-alias-input').value});
+    $('location-alias-dialog').close(); await refresh();
+    if (!favouriteOnly && !browserFolder && $('root').value) $('folder-label').textContent = locationLabel($('root').value);
+  } catch (error) { $('location-alias-error').textContent = error.message; }
+};
+async function removeLocation(root) {
+  if (!confirm('Remove "' + locationLabel(root) + '" from fs? This removes its index and watcher, not the original files. Running scans will not be interrupted.')) return;
+  try {
+    await api('remove', {root});
+    if ($('root').value === root) { $('root').value = ''; browserFolder = ''; }
+    await refresh(); if (searched) await search();
+    notice('Location removed from fs. Original files are unchanged.');
+  } catch (error) { report(error); }
+}
 let locationMenu;
 function closeLocationMenu() { locationMenu?.remove(); locationMenu = undefined; }
 function openLocationMenu(event, root) {
   event.preventDefault(); closeLocationMenu();
   locationMenu = element('div', 'location-context-menu'); locationMenu.setAttribute('role', 'menu');
-  locationMenu.setAttribute('aria-label', 'Location actions for ' + basename(root));
-  for (const [label, action] of [['Open in file manager', async () => { try { await api('source/open', {root}); } catch (error) { report(error); } }], ['Rescan location', () => rescanLocation(root)], ['Re-check availability', () => recheckLocation(root)]]) {
+  locationMenu.setAttribute('aria-label', 'Location actions for ' + locationLabel(root));
+  for (const [label, action] of [['Open in file manager', async () => { try { await api('source/open', {root}); } catch (error) { report(error); } }], ['Rescan location', () => rescanLocation(root)], ['Re-check availability', () => recheckLocation(root)], ['Rename alias', () => renameLocation(root)], ['Remove from fs', () => removeLocation(root)]]) {
     const button = element('button', '', label); button.setAttribute('role', 'menuitem');
     button.onclick = () => { closeLocationMenu(); action(); }; locationMenu.append(button);
   }
@@ -131,7 +156,7 @@ function updateLocationCount(label, source) {
   label.title = source.files.toLocaleString() + ' files indexed / ' + (source.total_files == null ? 'total unknown; rescan to count files' : source.total_files.toLocaleString() + ' total files (last discovery)');
 }
 function renderLocations(roots) {
-  const signature = JSON.stringify(roots.map(({root, availability, watch_enabled}) => ({root, availability, watch_enabled})));
+  const signature = JSON.stringify(roots.map(({root, availability, watch_enabled, alias}) => ({root, availability, watch_enabled, alias})));
   if (signature === locationsSignature) {
     for (const label of document.querySelectorAll('.location-count')) {
       const source = roots.find(item => item.root === label.dataset.root);
@@ -152,36 +177,33 @@ function renderLocations(roots) {
   for (const root of roots) {
     const button = element('button', 'location-link');
     button.title = root.root + ' · ' + root.availability;
-    button.append(element('span', '', root.availability === 'offline' ? '○' : '▤'), element('span', '', basename(root.root) + (root.availability === 'offline' ? ' · offline' : '')));
-    button.onclick = () => { browserFolder = ''; favouriteOnly = false; $('folder-label').textContent = basename(root.root); view('search'); $('root').value = root.root; updateFilterCount(); search(); if (root.availability === 'offline') recheckLocation(root.root); };
+    button.append(element('span', '', root.availability === 'offline' ? '○' : '▤'), element('span', '', locationLabel(root.root) + (root.availability === 'offline' ? ' · offline' : '')));
+    button.onclick = () => { browserFolder = ''; favouriteOnly = false; $('folder-label').textContent = locationLabel(root.root); view('search'); $('root').value = root.root; updateFilterCount(); search(); if (root.availability === 'offline') recheckLocation(root.root); };
     const sidebarCount = element('span', 'location-count'); sidebarCount.dataset.root = root.root; updateLocationCount(sidebarCount, root); button.append(sidebarCount);
     button.oncontextmenu = event => openLocationMenu(event, root.root);
     const row = element('div', 'location-row');
-    const meter = element('progress', 'location-progress'); meter.max = 100; meter.hidden = true; meter.dataset.root = root.root; meter.setAttribute('aria-label', 'Indexing progress for ' + basename(root.root));
+    const meter = element('progress', 'location-progress'); meter.max = 100; meter.hidden = true; meter.dataset.root = root.root; meter.setAttribute('aria-label', 'Indexing progress for ' + locationLabel(root.root));
     const remaining = element('span', 'location-remaining'); remaining.hidden = true; remaining.dataset.root = root.root;
     remaining.title = 'Files left in this scan, including the current file until processing finishes.';
     row.append(button, remaining, meter); $('locations').append(row);
-    $('root').append(new Option(basename(root.root), root.root));
+    $('root').append(new Option(locationLabel(root.root), root.root));
     const card = element('div', 'location-card');
     card.oncontextmenu = event => openLocationMenu(event, root.root);
     const text = element('div');
     const count = element('p', 'location-count', root.files.toLocaleString() + ' cached files · ' + root.availability); count.dataset.root = root.root; updateLocationCount(count, root);
     const watcher = element('p', 'location-watcher', root.watch_status || (root.watch_enabled ? 'Watcher starting' : 'Paused')); watcher.dataset.root = root.root;
     watcher.title = root.scope === 'selected' ? 'File-only import: watches only the explicitly selected files, never unrelated siblings.' : 'Checks for new and changed files in bounded discovery slices; waits for stable files and idle indexing. Runs while fs is open.';
-    text.append(element('h2', '', basename(root.root)), element('p', '', root.root), count, watcher);
+    text.append(element('h2', '', locationLabel(root.root)), element('p', '', root.root), count, watcher);
     const actions = element('div', 'location-actions');
     const reindex = element('button', '', 'Refresh index ↻');
     reindex.onclick = () => showIndex(root.root);
     const remove = element('button', '', 'Remove');
-    remove.onclick = async () => {
-      if (!confirm('Remove this location from the index? Your files will not be deleted.')) return;
-      try { await api('remove', { root: root.root }); await refresh(); if (searched) await search(); }
-      catch (error) { report(error); }
-    };
+    remove.onclick = () => removeLocation(root.root);
+    const rename = element('button', '', 'Rename alias'); rename.onclick = () => renameLocation(root.root);
     const check = element('button', '', 'Re-check status'); check.onclick = () => recheckLocation(root.root);
     const watch = element('button', '', root.watch_enabled ? 'Pause watcher' : 'Resume watcher');
     watch.onclick = async () => { try { await api('watch', {root:root.root, enabled:!root.watch_enabled}); await refresh(); } catch (error) { report(error); } };
-    actions.append(reindex, check, watch, remove); card.append(text, actions); $('location-cards').append(card);
+    actions.append(reindex, check, watch, rename, remove); card.append(text, actions); $('location-cards').append(card);
   }
   if (roots.some(root => root.root === selected)) $('root').value = selected;
   if (searched && status?.job.state !== 'running') scheduleSearch();
@@ -212,6 +234,8 @@ function updateScanProgress(job) {
 async function refresh() {
   const requestedLayoutRevision = layoutRevision;
   const requestedDuringLayoutSave = layoutPending > 0;
+  const requestedDisplayRevision = displayRevision;
+  const requestedDuringDisplaySave = displayPending > 0 || columnResizeActive;
   try {
     const previousFileCount = status?.files;
     status = await api('status');
@@ -223,6 +247,7 @@ async function refresh() {
     fillPreferences(status.preferences);
     if (document.activeElement !== $('accuracy')) { $('accuracy').value = status.preferences.accuracy; $('accuracy-value').value = Math.round(status.preferences.accuracy * 100) + '%'; }
     if (!requestedDuringLayoutSave && !layoutPending && requestedLayoutRevision === layoutRevision && (!preferencesLoaded || resultLayout !== status.preferences.result_layout)) setLayout(status.preferences.result_layout);
+    applyBrowserDisplay(status.preferences, requestedDisplayRevision, requestedDuringDisplaySave);
     preferencesLoaded = true;
     $('database-path').textContent = status.database;
     $('model-runtime-status').textContent = dirtyPreferences.has('model') || dirtyPreferences.has('embedding_backend') ? 'Unsaved selection · Set up embedding model applies your selected model and runtime first.' : status.model_runtime.direct_ready && status.model_runtime.backend === 'direct' ? 'Ready · ' + status.model + ' · ' + status.model_runtime.modalities.join(' / ') + ' · direct ONNX CPU · cached locally' : status.model + ' · runtime: ' + status.model_runtime.backend + ' · setup not yet verified';
@@ -263,7 +288,7 @@ async function search(clearNotice = true) {
   $('search-button').disabled = true;
   $('search-button').textContent = 'Searching…';
   updateClearQuery();
-  $('folder-label').textContent = favouriteOnly ? 'Favourite files' : browserFolder || ($('root').value ? basename($('root').value) : 'All indexed locations');
+  $('folder-label').textContent = favouriteOnly ? 'Favourite files' : browserFolder || ($('root').value ? locationLabel($('root').value) : 'All indexed locations');
   const body = {query: $('query').value, mode, limit: 100, file_type: browserType, folder: browserFolder, favourites_only: favouriteOnly, sort_by: browserSort, sort_desc: browserDescending, minimum_relevance: Number($('accuracy').value)};
   for (const id of filterIds) if ($(id).value) body[id.replaceAll('-', '_')] = $(id).value;
   try {

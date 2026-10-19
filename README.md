@@ -4,6 +4,13 @@
 
 Developed by **Chris Visser** · [github.com/vcsoc/fs](https://github.com/vcsoc/fs)
 
+## Location and display controls
+
+- Right-click a linked location to **Rename alias** or **Remove from fs**. An alias changes only its fs display name; leave it blank to restore the folder name. Removing a location removes its index and watcher, never its original files. Removal is blocked until scans finish rather than interrupting them.
+- The image icon beside Accuracy shows/hides thumbnails. Hidden thumbnails use a compact text list; showing them restores the selected layout. This preference persists.
+- Drag the right edge of a list column header to resize it. Focus its resize handle and use Left/Right (Shift for larger steps), or double-click/Home to reset that column. Widths persist with the shared preferences.
+- Sidebar labels are slightly larger; existing text-only zoom still applies without enlarging images.
+
 ## Quick start
 
 Requires Python 3.11+ and Node.js 22.12+ for source execution. Packaged desktop builds include the backend/runtime dependencies. Ollama is optional: fs can run the exact EmbeddingGemma 2 model directly using its built-in ONNX CPU runtime. A mounted drive is selected by choosing its mount directory; fs does not mount or read raw devices.
@@ -73,7 +80,7 @@ fs desktop
 
 The installer copies only the standalone build to `~/.local/opt/fs/releases/<version>`, adds the `fs` CLI wrapper to `~/.local/bin`, and registers an **fs** desktop-menu entry under your XDG applications directory. It does not depend on this source checkout and refuses to overwrite existing installation files. `fs desktop` launches the installed GUI; use `FS_DATA_DIR` / `FS_MODEL` / `FS_OLLAMA_URL` environment variables for its overrides. Other CLI commands accept their usual global flags.
 
-Share `dist/fs-0.8.0.AppImage` with its `.sha256` file. See `SHARING.md` for first-run model downloads and platform limitations. Packaging uses an explicit desktop/backend allowlist; the untracked `vault/` directory is neither copied nor packaged.
+Share `dist/fs-0.9.0.AppImage` with its `.sha256` file. See `SHARING.md` for first-run model downloads and platform limitations. Packaging uses an explicit desktop/backend allowlist; the untracked `vault/` directory is neither copied nor packaged.
 
 ## CLI
 

@@ -1,3 +1,4 @@
+const fixtureRoot=JSON.stringify(process.env.FS_FIXTURE_ROOT||'/tmp/fs-070-format-fixtures');
 const target=(await(await fetch(process.env.FS_CDP_URL+'/json/list')).json()).find(t=>t.type==='page'&&t.url.startsWith('http://127.0.0.1:'));
 const ws=new WebSocket(target.webSocketDebuggerUrl);await new Promise(r=>ws.onopen=r);
 let id=0;const pending=new Map();ws.onmessage=e=>{const m=JSON.parse(e.data);if(pending.has(m.id)){const p=pending.get(m.id);pending.delete(m.id);m.error?p.reject(new Error(JSON.stringify(m.error))):p.resolve(m.result)}};
@@ -7,7 +8,7 @@ async function key(key,code,windowsVirtualKeyCode){await command('Input.dispatch
 const timeout=setTimeout(()=>process.exit(1),45000);
 try {
  await command('Page.bringToFront');await key('0','Digit0',48);
- await evaluate(`(async()=>{const r=await api('search',{mode:'filename',root:'/tmp/fs-070-format-fixtures'});await api('preferences',{result_layout:'grid'});renderBrowserResults(r);setLayout('grid');await new Promise(r=>setTimeout(r,200));window.zoomProbe=()=>{const t=$('results').querySelector('.file-thumbnail').getBoundingClientRect();return {font:parseFloat(getComputedStyle($('results').querySelector('.file-title')).fontSize),width:t.width,height:t.height,viewport:innerWidth,scale:document.documentElement.dataset.textScale}};window.zoomBaseline=zoomProbe()})()`);
+ await evaluate(`(async()=>{const r=await api('search',{mode:'filename',root:${fixtureRoot}});await api('preferences',{result_layout:'grid'});renderBrowserResults(r);setLayout('grid');await new Promise(r=>setTimeout(r,200));window.zoomProbe=()=>{const t=$('results').querySelector('.file-thumbnail').getBoundingClientRect();return {font:parseFloat(getComputedStyle($('results').querySelector('.file-title')).fontSize),width:t.width,height:t.height,viewport:innerWidth,scale:document.documentElement.dataset.textScale}};window.zoomBaseline=zoomProbe()})()`);
  await key('+','Equal',187);
  const zoomed=await evaluate(`(()=>{const x=zoomProbe(),b=zoomBaseline;if(!(x.font>b.font&&Math.abs(x.width-b.width)<.01&&Math.abs(x.height-b.height)<.01&&x.viewport===b.viewport))throw new Error('Font-only zoom failed '+JSON.stringify({x,b}));return x})()`);
  await key('-','Minus',189);

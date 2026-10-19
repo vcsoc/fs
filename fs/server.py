@@ -210,6 +210,7 @@ def serve(store: Store, port=0, browser=False):
                     return self.reply(200, app.models.status(probe=True))
                 return self.reply(404, {"error": "Not found"})
             assets = {"/": ("index.html", "text/html; charset=utf-8"), "/style.css": ("style.css", "text/css"), "/app.js": ("app.js", "text/javascript"), "/browser.js": ("browser.js", "text/javascript"), "/layouts.css": ("layouts.css", "text/css"), "/icon.svg": ("icon.svg", "image/svg+xml")}
+            assets['/browser-display.js'] = ('browser-display.js', 'text/javascript')
             assets['/text-zoom.js'] = ('text-zoom.js', 'text/javascript')
             assets['/file-transfer.js'] = ('file-transfer.js', 'text/javascript')
             assets['/match-playback.js'] = ('match-playback.js', 'text/javascript')
@@ -302,6 +303,8 @@ def serve(store: Store, port=0, browser=False):
                     result['results'] = [app.preview.decorate(file) for file in result['results']]
                 elif path == '/api/import':
                     result = app.import_paths(body['paths'], body.get('semantic', True))
+                elif path == '/api/source/alias':
+                    result = store.rename_location(body['root'], body['alias'])
                 elif path == '/api/watch':
                     if not isinstance(body.get('enabled'), bool):
                         raise ValueError('Watcher setting must be a boolean.')

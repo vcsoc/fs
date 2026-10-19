@@ -15,6 +15,8 @@ DEFAULTS = {
     "max_file_mb": 8,
     "max_chunks": 64,
     "use_gpu": False,
+    'show_thumbnails': True,
+    'column_widths': {},
 }
 LIMITS = {
     "cpu_threads": (1, 64),
@@ -50,6 +52,11 @@ def validate(values):
         raise ValueError("Theme must be dark or light.")
     if type(result["use_gpu"]) is not bool:
         raise ValueError("GPU preference must be true or false.")
+    if type(result['show_thumbnails']) is not bool:
+        raise ValueError('Thumbnail visibility must be a boolean.')
+    widths = result['column_widths']
+    if not isinstance(widths, dict) or set(widths) - {'name', 'path', 'score', 'size', 'modified', 'created', 'indexed_at', 'analyzed_at'} or any(type(value) is not int or not 60 <= value <= 1500 for value in widths.values()):
+        raise ValueError('Column widths must be integers between 60 and 1500 for known columns.')
     for key, (low, high) in LIMITS.items():
         value = result[key]
         if type(value) is not int or not low <= value <= high:

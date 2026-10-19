@@ -208,7 +208,7 @@ class Store:
                 db.execute('ALTER TABLE locations ADD COLUMN volume TEXT')
             if 'total_files' not in location_columns:
                 db.execute('ALTER TABLE locations ADD COLUMN total_files INTEGER')
-            for column, definition in [('scope', "TEXT NOT NULL DEFAULT 'recursive'"), ('watch_enabled', 'INTEGER NOT NULL DEFAULT 1')]:
+            for column, definition in [('scope', "TEXT NOT NULL DEFAULT 'recursive'"), ('watch_enabled', 'INTEGER NOT NULL DEFAULT 1'), ('alias', "TEXT NOT NULL DEFAULT ''")]:
                 if column not in location_columns:
                     db.execute(f'ALTER TABLE locations ADD COLUMN {column} {definition}')
             db.execute('CREATE TABLE IF NOT EXISTS location_files(root TEXT NOT NULL REFERENCES locations(root) ON DELETE CASCADE, path TEXT NOT NULL, PRIMARY KEY(root,path))')
@@ -227,6 +227,15 @@ class Store:
             db.execute('INSERT OR IGNORE INTO locations(root,scope) VALUES(?,?)', (resolved, scope))
         self.sources.invalidate(resolved)
         return resolved
+
+    def rename_location(self, root, alias):
+        if not isinstance(alias, str) or len(alias) > 120 or any(ord(char) < 32 or ord(char) == 127 for char in alias):
+            raise ValueError('Enter an alias of up to 120 characters without control characters.')
+        with self.connect() as db:
+            if not db.execute('SELECT root FROM locations WHERE root=?', (root,)).fetchone():
+                raise ValueError('Unknown indexed location.')
+            db.execute('UPDATE locations SET alias=? WHERE root=?', (alias.strip(), root))
+        return {'root': root, 'alias': alias.strip()}
 
     def preferences(self):
         with self.connect() as db:
@@ -250,7 +259,7 @@ class Store:
         with self.connect() as db:
             # Keep new search/display settings separate so older scanning
             # workers can still read their resource preferences during upgrades.
-            search_keys = {'accuracy', 'result_layout'}
+            search_keys = {'accuracy', 'result_layout', 'show_thumbnails', 'column_widths'}
             db.execute("INSERT OR REPLACE INTO meta VALUES('preferences',?)", (json.dumps({key: value for key, value in prefs.items() if key not in search_keys}),))
             db.execute("INSERT OR REPLACE INTO meta VALUES('search_preferences',?)", (json.dumps({key: prefs[key] for key in search_keys}),))
         self.apply_preferences()
@@ -274,7 +283,7 @@ class Store:
             count = db.execute("SELECT count(*),sum(length(content)>0),sum(error IS NOT NULL) FROM files").fetchone()
             return {"files": count[0], "readable": count[1] or 0, "errors": count[2] or 0,
                     "chunks": db.execute("SELECT count(*) FROM vectors").fetchone()[0],
-                    "roots": [{**dict(r), 'availability': self.sources.status(r['root'], r['device'], r['volume'])} for r in db.execute("SELECT l.root,l.device,l.volume,l.total_files,l.scope,l.watch_enabled,count(f.id) AS files FROM locations l LEFT JOIN files f ON f.root=l.root GROUP BY l.root ORDER BY l.root")],
+                    "roots": [{**dict(r), 'availability': self.sources.status(r['root'], r['device'], r['volume'])} for r in db.execute("SELECT l.root,l.device,l.volume,l.total_files,l.scope,l.watch_enabled,l.alias,count(f.id) AS files FROM locations l LEFT JOIN files f ON f.root=l.root GROUP BY l.root ORDER BY l.root")],
                     "model": self.embedder.model, "database": str(self.path),
                     "indexed_model": self._meta(db, "model"), "preferences": prefs}
 

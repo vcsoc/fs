@@ -57,8 +57,8 @@ function observeGalleryCard(card, preview, file) {
   });
   preview.addEventListener('pointerenter', event => { if (event.pointerType !== 'touch') showGalleryDetails(card, file); });
   preview.addEventListener('pointerleave', () => { if (galleryFocusedCard === card) hideGalleryDetails(); });
-  card.addEventListener('focusin', () => showGalleryDetails(card, file));
-  card.addEventListener('focusout', event => { if (!card.contains(event.relatedTarget) && galleryFocusedCard === card) hideGalleryDetails(); });
+  card.onfocusin = () => showGalleryDetails(card, file);
+  card.onfocusout = event => { if (!card.contains(event.relatedTarget) && galleryFocusedCard === card) hideGalleryDetails(); };
 }
 function scheduleGallery() {
   cancelAnimationFrame(galleryFrame);

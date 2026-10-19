@@ -132,3 +132,14 @@ def test_static_assets_and_csp(server):
             assert "frame-ancestors 'none'" in response.headers["Content-Security-Policy"]
     with pytest.raises(urllib.error.HTTPError):
         urllib.request.urlopen(url + "/../core.py", timeout=5)
+
+
+def test_location_alias_api(server):
+    root = json.load(request(server, "status"))["roots"][0]["root"]
+    json.load(request(server, "source/alias", {"root":root, "alias":"My documents"}))
+    assert json.load(request(server, "status"))["roots"][0]["alias"] == "My documents"
+    with pytest.raises(urllib.error.HTTPError) as error:
+        request(server, "source/alias", {"root":root, "alias":"line\nbreak"})
+    assert error.value.code == 400
+    with pytest.raises(urllib.error.HTTPError):
+        request(server, "source/alias", {"root":root, "alias":"unauthorized"}, authorized=False)

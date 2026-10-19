@@ -1,6 +1,6 @@
 {
   "name": "fs-desktop",
-  "version": "0.8.0",
+  "version": "0.9.0",
   "private": true,
   "description": "Local-first semantic file search",
   "author": "Chris Visser",
@@ -8,7 +8,7 @@
   "main": "desktop/main.cjs",
   "scripts": {
     "start": "node desktop/launch.cjs",
-    "check": "node --check desktop/main.cjs && node --check desktop/preload.cjs && node --check desktop/launch.cjs && node --check desktop/service-supervisor.cjs && node --check fs/web/app.js && node --check fs/web/browser.js && node --check fs/web/animated-preview.js && node --check fs/web/gallery.js && node --check fs/web/timeline.js && node --check fs/web/media-controls.js && node --check fs/web/match-playback.js && node --check fs/web/file-transfer.js && node --check desktop/file-transfer.cjs && node --check desktop/text-zoom.cjs && node --check fs/web/text-zoom.js",
+    "check": "node --check desktop/main.cjs && node --check desktop/preload.cjs && node --check desktop/launch.cjs && node --check desktop/service-supervisor.cjs && node --check fs/web/app.js && node --check fs/web/browser.js && node --check fs/web/animated-preview.js && node --check fs/web/gallery.js && node --check fs/web/timeline.js && node --check fs/web/media-controls.js && node --check fs/web/match-playback.js && node --check fs/web/file-transfer.js && node --check desktop/file-transfer.cjs && node --check desktop/text-zoom.cjs && node --check fs/web/text-zoom.js && node --check fs/web/browser-display.js",
     "test:desktop": "node --test tests/test_service_supervisor.cjs tests/test_match_playback.cjs tests/test_file_transfer.cjs tests/test_text_zoom.cjs",
     "pack": "electron-builder --dir --publish never",
     "dist": "electron-builder --publish never"
